@@ -49,15 +49,40 @@ function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string
 }
 
 export default function dataBackupExtension(pi: ExtensionAPI) {
+	let shouldClearOnFirstPrompt = false;
+
 	pi.on("session_start", async (_event, ctx) => {
 		if (process.env.PI_SUBAGENT === "1") return;
 
+		shouldClearOnFirstPrompt = false;
 		const result = ensureDailyBackup(ctx.cwd);
-		if (result.created && ctx.hasUI) {
-			ctx.ui.notify(`Created backup: ${path.relative(ctx.cwd, result.backupPath ?? "")}`, "info");
+		if (!ctx.hasUI) return;
+
+		const theme = ctx.ui.theme;
+		if (result.created) {
+			ctx.ui.setWidget("data-backup", [theme.fg("dim", `backup: ok (created ${path.relative(ctx.cwd, result.backupPath ?? "")})`)]);
+			shouldClearOnFirstPrompt = true;
+			return;
 		}
-		if (result.error && ctx.hasUI) {
-			ctx.ui.notify(`Backup failed: ${result.error}`, "warning");
+		if (result.backupPath) {
+			ctx.ui.setWidget(
+				"data-backup",
+				[theme.fg("dim", `backup: ok (${path.relative(ctx.cwd, result.backupPath)} already exists)`)],
+			);
+			shouldClearOnFirstPrompt = true;
+			return;
 		}
+		if (result.error) {
+			ctx.ui.setWidget("data-backup", [theme.fg("warning", `backup failed: ${result.error}`)]);
+			shouldClearOnFirstPrompt = true;
+			return;
+		}
+	});
+
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (process.env.PI_SUBAGENT === "1") return;
+		if (!ctx.hasUI || !shouldClearOnFirstPrompt) return;
+		ctx.ui.setWidget("data-backup", undefined);
+		shouldClearOnFirstPrompt = false;
 	});
 }
