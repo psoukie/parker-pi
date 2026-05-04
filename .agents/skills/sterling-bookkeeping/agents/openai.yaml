@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sterling"
+  short_description: "Bookkeeping transaction classifier"
+  default_prompt: "Use $sterling-bookkeeping to process this transaction batch into reviewed unknowns and journal-ready double-entry TSV lines."

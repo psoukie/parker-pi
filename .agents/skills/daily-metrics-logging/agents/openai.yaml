@@ -1,0 +1,4 @@
+interface:
+  display_name: "Daily Metrics"
+  short_description: "Log Parker daily sleep and routine metrics"
+  default_prompt: "Use $daily-metrics-logging to record these daily metrics without reading the private metrics file."

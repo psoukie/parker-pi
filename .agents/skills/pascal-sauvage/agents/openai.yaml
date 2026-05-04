@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pascal Sauvage"
+  short_description: "Rewrite text in Pavel's style"
+  default_prompt: "Use $pascal-sauvage to rewrite provided text or file in Pavel Soukenik's writing style while preserving facts and intent."

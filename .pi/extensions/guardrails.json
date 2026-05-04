@@ -1,0 +1,11 @@
+{
+  "pathAccess": {
+    "allowedPaths": [
+      "~/.nvm/versions/node/v24.11.1/lib/node_modules/@mariozechner/pi-coding-agent/README.md",
+      "~/.nvm/versions/node/v24.11.1/lib/node_modules/@mariozechner/pi-coding-agent/docs/",
+      "/tmp/",
+      "~/.nvm/versions/node/v24.11.1/lib/node_modules/@mariozechner/pi-coding-agent/examples/extensions/subagent/"
+    ]
+  },
+  "version": "0.9.0-20260327"
+}
