@@ -46,7 +46,7 @@ from typing import Iterable, List, Optional
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path.cwd()
-DATA_ROOT = WORKSPACE_ROOT / 'data' / 'sterling-bookkeeping'
+DATA_ROOT = WORKSPACE_ROOT / 'data' / 'bookkeeping'
 DEFAULT_MERCHANTS = DATA_ROOT / 'merchants.tsv'
 DEFAULT_OUTPUT = DATA_ROOT / 'journal' / 'preprocessed.tsv'
 DEFAULT_UNKNOWNS = DATA_ROOT / 'journal' / 'unknowns.tsv'

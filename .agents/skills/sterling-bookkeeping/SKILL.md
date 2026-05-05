@@ -11,12 +11,12 @@ Sterling is a specialized bookkeeping agent. Use this skill when Parker needs he
 
 - Keep the judgment loop narrow: Sterling reviews unresolved transactions, not the whole raw statement, unless debugging is needed.
 - Use strict double-entry accounting.
-- Validate account choices against `data/sterling-bookkeeping/chart-of-accounts.md`, falling back to tracked examples only if local data has not been initialized.
+- Validate account choices against `data/bookkeeping/chart-of-accounts.md`, falling back to tracked examples only if local data has not been initialized.
 - Use `6099 Uncategorized spending` only as a temporary unresolved placeholder.
 - Ask Pavel about unclear, unusual, suspicious, or context-dependent items.
 - Before adding or changing any `persistent` merchant rule, propose it in chat and wait for Pavel's approval.
 - Use `batch_only` for one-off purchases, trip-specific items, marketplaces, or cases where the item bought matters more than the merchant.
-- During normal runs, do not open `data/sterling-bookkeeping/merchants.tsv` to inspect or confirm deterministic matches or persistent writes. Trust the script output unless debugging a broken workflow or Pavel explicitly asks.
+- During normal runs, do not open `data/bookkeeping/merchants.tsv` to inspect or confirm deterministic matches or persistent writes. Trust the script output unless debugging a broken workflow or Pavel explicitly asks.
 
 ## Account Selection
 
@@ -32,27 +32,27 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 ## Files
 
-- `data/sterling-bookkeeping/chart-of-accounts.md`: local account codes and normal balances.
-- `data/sterling-bookkeeping/merchants.tsv`: durable merchant matching rules used by the deterministic script; do not read during normal review.
+- `data/bookkeeping/chart-of-accounts.md`: local account codes and normal balances.
+- `data/bookkeeping/merchants.tsv`: durable merchant matching rules used by the deterministic script; do not read during normal review.
 - `.agents/skills/sterling-bookkeeping/examples/`: tracked example/template files for initializing local Sterling data.
 - `.agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py`: deterministic CSV-to-unknowns and CSV-to-journal handler.
-- `data/sterling-bookkeeping/journal/unknowns.tsv`: workspace-local review file generated during a batch.
-- `data/sterling-bookkeeping/journal/reviewed_unknowns.tsv`: workspace-local review file Sterling prepares after classification.
-- `data/sterling-bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv`: workspace-local final journal output.
+- `data/bookkeeping/journal/unknowns.tsv`: workspace-local review file generated during a batch.
+- `data/bookkeeping/journal/reviewed_unknowns.tsv`: workspace-local review file Sterling prepares after classification.
+- `data/bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv`: workspace-local final journal output.
 
 ## Batch Workflow
 
 1. Preprocess the statement CSV:
 
    ```bash
-   python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns data/sterling-bookkeeping/journal/unknowns.tsv
+   python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns data/bookkeeping/journal/unknowns.tsv
    ```
 
 2. If there are no unknown entries, skip to final journal generation.
 
-3. Read only `data/sterling-bookkeeping/journal/unknowns.tsv` and `data/sterling-bookkeeping/chart-of-accounts.md` during normal classification.
+3. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification.
 
-4. Fill in unresolved rows in `data/sterling-bookkeeping/journal/reviewed_unknowns.tsv`:
+4. Fill in unresolved rows in `data/bookkeeping/journal/reviewed_unknowns.tsv`:
 
    - `account_code`
    - `description`
@@ -65,14 +65,14 @@ When classifying unknowns, choose the most relevant COA account for the substanc
    - proposed persistent rules awaiting approval
    - only the remaining questions
 
-6. After Pavel answers and approves any persistent rules, update `data/sterling-bookkeeping/journal/reviewed_unknowns.tsv`.
+6. After Pavel answers and approves any persistent rules, update `data/bookkeeping/journal/reviewed_unknowns.tsv`.
 
 7. Generate final journal entries:
 
    ```bash
    python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv \
-     --output data/sterling-bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv \
-     --reviewed-unknowns data/sterling-bookkeeping/journal/reviewed_unknowns.tsv \
+     --output data/bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv \
+     --reviewed-unknowns data/bookkeeping/journal/reviewed_unknowns.tsv \
      --account-normal-direction credit \
      --balancing-account 2001
    ```
