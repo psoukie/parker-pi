@@ -65,6 +65,7 @@ class Mapping:
 
 @dataclass(frozen=True)
 class Transaction:
+    txn_key: str
     date: str
     payee: str
     amount: float
@@ -152,13 +153,13 @@ def read_transactions(csv_path: Path) -> List[Transaction]:
     transactions: List[Transaction] = []
     with csv_path.open(newline='') as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        for row_index, row in enumerate(reader, start=1):
             date = (row.get('Posted Date') or row.get('Date') or '').strip()
             payee = (row.get('Payee') or row.get('Description') or row.get('Merchant') or '').strip()
             amount_raw = (row.get('Amount') or row.get('amount') or '').strip()
             if not date or not payee or not amount_raw:
                 continue
-            transactions.append(Transaction(date=date, payee=payee, amount=parse_amount(amount_raw)))
+            transactions.append(Transaction(txn_key=str(row_index), date=date, payee=payee, amount=parse_amount(amount_raw)))
     return transactions
 
 
@@ -208,7 +209,7 @@ def render_unknowns(classified: List[ClassifiedTransaction]) -> List[str]:
             continue
         payee = item.transaction.payee
         merchant = normalize(payee)
-        txn_key = f'{item.transaction.date}|{item.transaction.amount:.2f}|{payee}'
+        txn_key = item.transaction.txn_key
         rows.append(f'{txn_key}\t{item.transaction.date}\t{merchant}\t{payee}\t{item.transaction.amount:.2f}\t6099\tUncategorized spending\treview\t')
     return rows
 
@@ -389,8 +390,7 @@ def main(argv: List[str]) -> int:
         updated_classified: List[ClassifiedTransaction] = []
         for item in classified:
             tx = item.transaction
-            txn_key = f'{tx.date}|{tx.amount:.2f}|{tx.payee}'
-            reviewed = reviewed_by_key.get(txn_key)
+            reviewed = reviewed_by_key.get(tx.txn_key)
             if reviewed is not None:
                 updated_classified.append(ClassifiedTransaction(
                     transaction=tx,
