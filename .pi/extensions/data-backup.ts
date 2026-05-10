@@ -12,15 +12,14 @@ function todayString() {
 }
 
 function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string; skipped?: string; error?: string } {
-	const dataDir = path.join(cwd, "data");
-	if (!fs.existsSync(dataDir)) {
-		return { created: false, skipped: "No data/ directory found." };
+	if (!fs.existsSync(cwd)) {
+		return { created: false, skipped: `Working directory not found: ${cwd}` };
 	}
 
 	const backupsDir = path.join(cwd, "backups");
 	fs.mkdirSync(backupsDir, { recursive: true });
 
-	const backupName = `${todayString()}-data.zip`;
+	const backupName = `${todayString()}-workspace.zip`;
 	const backupPath = path.join(backupsDir, backupName);
 	if (fs.existsSync(backupPath)) {
 		return { created: false, backupPath };
@@ -29,10 +28,24 @@ function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string
 	const tempPath = `${backupPath}.tmp`;
 	try {
 		if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
-		const result = spawnSync("zip", ["-r", "-q", tempPath, "data"], {
-			cwd,
-			encoding: "utf8",
-		});
+		const result = spawnSync(
+			"zip",
+			[
+				"-r",
+				"-q",
+				tempPath,
+				".",
+				"-x",
+				"backups/",
+				"backups/*",
+				"./backups/",
+				"./backups/*",
+			],
+			{
+				cwd,
+				encoding: "utf8",
+			},
+		);
 		if (result.status !== 0) {
 			return { created: false, error: (result.stderr || result.stdout || "zip failed").trim() };
 		}

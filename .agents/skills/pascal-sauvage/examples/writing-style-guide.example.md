@@ -1,6 +1,6 @@
 # Example Writing Style Guide
 
-This is a template for `data/pascal-sauvage/writing-style-guide.md`. Replace it with Pavel's actual private style guide in the ignored `data/pascal-sauvage/` folder.
+This is a template for `data/style-guide/writing-style-guide.md`. Replace it with Pavel's actual private style guide in the project-local `data/style-guide/` folder.
 
 ## Core Principles
 

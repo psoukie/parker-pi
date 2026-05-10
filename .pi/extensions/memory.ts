@@ -6,6 +6,10 @@ export default function memoryExtension(pi: ExtensionAPI) {
 	let memoryPath = "";
 	let memoryContent: string | undefined;
 
+	function isSubagentProcess() {
+		return process.env.PI_SUBAGENT === "1";
+	}
+
 	function loadMemory(cwd: string) {
 		memoryPath = path.join(cwd, "data", "MEMORY.md");
 		memoryContent = fs.existsSync(memoryPath)
@@ -14,15 +18,17 @@ export default function memoryExtension(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		if (isSubagentProcess()) return;
 		loadMemory(ctx.cwd);
 	});
 
 	pi.on("resources_discover", async (event) => {
+		if (isSubagentProcess()) return;
 		loadMemory(event.cwd);
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		if (process.env.PI_SUBAGENT === "1") return;
+		if (isSubagentProcess()) return;
 		if (!memoryContent) return;
 
 		return {
