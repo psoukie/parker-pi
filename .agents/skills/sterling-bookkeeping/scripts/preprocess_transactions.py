@@ -89,6 +89,11 @@ class EnrichedCategory:
 
 def normalize(text: str) -> str:
     text = text.upper()
+    text = re.sub(
+        r'\bID:([^\s]+)',
+        lambda match: 'ID:' + re.sub(r'\d+', '', match.group(1)),
+        text,
+    )
     text = re.sub(r"[^A-Z0-9 &./'\-]+", ' ', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
