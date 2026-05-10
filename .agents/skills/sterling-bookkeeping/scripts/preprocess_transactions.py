@@ -202,8 +202,9 @@ def render_unknowns(classified: List[ClassifiedTransaction]) -> List[str]:
         if item.matched_merchant is not None:
             continue
         payee = item.transaction.payee
+        merchant = normalize(payee)
         txn_key = f'{item.transaction.date}|{item.transaction.amount:.2f}|{payee}'
-        rows.append(f'{txn_key}\t{item.transaction.date}\t{payee}\t{payee}\t{item.transaction.amount:.2f}\t6099\tUncategorized spending\treview\t')
+        rows.append(f'{txn_key}\t{item.transaction.date}\t{merchant}\t{payee}\t{item.transaction.amount:.2f}\t6099\tUncategorized spending\treview\t')
     return rows
 
 

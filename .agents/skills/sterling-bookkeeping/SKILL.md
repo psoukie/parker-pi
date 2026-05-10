@@ -11,7 +11,7 @@ Sterling is a specialized bookkeeping agent. Use this skill when Parker needs he
 
 - Keep the judgment loop narrow: Sterling reviews unresolved transactions, not the whole raw statement, unless debugging is needed.
 - Use strict double-entry accounting.
-- Validate account choices against `data/bookkeeping/chart-of-accounts.md`, falling back to tracked examples only if local data has not been initialized.
+- Validate account choices against `data/bookkeeping/chart-of-accounts.md`
 - Use `6099 Uncategorized spending` only as a temporary unresolved placeholder.
 - Ask Pavel about unclear, unusual, suspicious, or context-dependent items.
 - Before adding or changing any `persistent` merchant rule, propose it in chat and wait for Pavel's approval.
@@ -35,7 +35,6 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 - `data/bookkeeping/chart-of-accounts.md`: local account codes and normal balances.
 - `data/bookkeeping/merchants.tsv`: durable merchant matching rules used by the deterministic script; do not read during normal review.
-- `.agents/skills/sterling-bookkeeping/examples/`: tracked example/template files for initializing local Sterling data.
 - `.agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py`: deterministic CSV-to-unknowns and CSV-to-journal handler.
 - `data/bookkeeping/journal/unknowns.tsv`: workspace-local review file generated during a batch.
 - `data/bookkeeping/journal/reviewed_unknowns.tsv`: workspace-local review file Sterling prepares after classification.
