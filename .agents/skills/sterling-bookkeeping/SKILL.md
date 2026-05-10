@@ -61,12 +61,20 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 3. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification. Do not read the preprocessing script or merchant rules during this step.
 
-4. Fill in unresolved rows in `data/bookkeeping/journal/reviewed_unknowns.tsv`:
+4. Create the review file by copying the unknowns file, then edit the copy:
+
+   ```bash
+   cp data/bookkeeping/journal/unknowns.tsv \
+      data/bookkeeping/journal/reviewed_unknowns.tsv
+   ```
+
+   In `data/bookkeeping/journal/reviewed_unknowns.tsv`, preserve the columns and row order from `unknowns.tsv`. Edit only:
 
    - `account_code`
    - `description`
    - `learning_mode`: `persistent` or `batch_only`
-   - `notes`, when useful
+
+   Leave unclear rows as `6099`, `Uncategorized spending`, and `review` until Pavel answers.
 
 5. Report to Pavel:
 

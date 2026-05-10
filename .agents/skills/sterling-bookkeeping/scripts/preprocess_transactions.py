@@ -15,7 +15,7 @@ Journal TSV format:
   date\taccount_code\tdescription\tdebit\tcredit
 
 Unknowns / review TSV format:
-  txn_key\tdate\tmerchant\traw_payee\tamount\taccount_code\tdescription\tlearning_mode\tnotes
+  txn_key\tdate\tmerchant\traw_payee\tamount\taccount_code\tdescription\tlearning_mode
 
 Rules:
 - Amount direction is interpreted using --account-normal-direction, which means
@@ -60,7 +60,6 @@ class Mapping:
     merchant: str
     account_code: str
     description: str
-    notes: str = ''
 
 
 @dataclass(frozen=True)
@@ -85,7 +84,6 @@ class EnrichedCategory:
     amount: str = ''
     account_code: str = ''
     description: str = ''
-    notes: str = ''
 
 
 def normalize(text: str) -> str:
@@ -117,9 +115,8 @@ def load_mappings(merchants_file: Path) -> List[Mapping]:
         merchant = (row.get('merchant') or row.get('Merchant') or '').strip()
         account_code = (row.get('account_code') or row.get('Account Code') or '').strip()
         description = (row.get('description') or row.get('Description') or '').strip()
-        notes = (row.get('notes') or row.get('Notes') or '').strip()
         if merchant and account_code and description:
-            mappings.append(Mapping(merchant=merchant, account_code=account_code, description=description, notes=notes))
+            mappings.append(Mapping(merchant=merchant, account_code=account_code, description=description))
     return mappings
 
 
@@ -203,14 +200,14 @@ def render_journal_lines(classified: List[ClassifiedTransaction], balancing_acco
 
 
 def render_unknowns(classified: List[ClassifiedTransaction]) -> List[str]:
-    rows = ['txn_key\tdate\tmerchant\traw_payee\tamount\taccount_code\tdescription\tlearning_mode\tnotes']
+    rows = ['txn_key\tdate\tmerchant\traw_payee\tamount\taccount_code\tdescription\tlearning_mode']
     for item in classified:
         if item.matched_merchant is not None:
             continue
         payee = item.transaction.payee
         merchant = normalize(payee)
         txn_key = item.transaction.txn_key
-        rows.append(f'{txn_key}\t{item.transaction.date}\t{merchant}\t{payee}\t{item.transaction.amount:.2f}\t6099\tUncategorized spending\treview\t')
+        rows.append(f'{txn_key}\t{item.transaction.date}\t{merchant}\t{payee}\t{item.transaction.amount:.2f}\t6099\tUncategorized spending\treview')
     return rows
 
 
@@ -227,9 +224,8 @@ def parse_enriched_file(path: Path) -> List[EnrichedCategory]:
         amount = (normalized_row.get('amount') or normalized_row.get('Amount') or '').strip()
         account_code = (normalized_row.get('account_code') or normalized_row.get('Account Code') or '').strip()
         description = (normalized_row.get('description') or normalized_row.get('Description') or '').strip()
-        notes = (normalized_row.get('notes') or normalized_row.get('Notes') or '').strip()
         if merchant and account_code and description:
-            entries.append(EnrichedCategory(merchant=merchant, amount=amount, account_code=account_code, description=description, notes=notes))
+            entries.append(EnrichedCategory(merchant=merchant, amount=amount, account_code=account_code, description=description))
     return entries
 
 
@@ -240,10 +236,9 @@ def append_merchant_entries(entries: List[EnrichedCategory], merchants_file: Pat
         merchant = (row.get('merchant') or row.get('Merchant') or '').strip()
         account_code = (row.get('account_code') or row.get('Account Code') or '').strip()
         description = (row.get('description') or row.get('Description') or '').strip()
-        notes = (row.get('notes') or row.get('Notes') or '').strip()
         if merchant:
             normalized = normalize(merchant)
-            record = {'merchant': merchant, 'account_code': account_code, 'description': description, 'notes': notes}
+            record = {'merchant': merchant, 'account_code': account_code, 'description': description}
             existing_rows.append(record)
             existing_by_key[normalized] = record
     added = 0
@@ -252,7 +247,7 @@ def append_merchant_entries(entries: List[EnrichedCategory], merchants_file: Pat
         key = normalize(entry.merchant)
         if not key:
             continue
-        new_record = {'merchant': entry.merchant, 'account_code': entry.account_code, 'description': entry.description, 'notes': entry.notes}
+        new_record = {'merchant': entry.merchant, 'account_code': entry.account_code, 'description': entry.description}
         if key in existing_by_key:
             record = existing_by_key[key]
             if record != new_record:
@@ -264,7 +259,7 @@ def append_merchant_entries(entries: List[EnrichedCategory], merchants_file: Pat
         added += 1
     merchants_file.parent.mkdir(parents=True, exist_ok=True)
     with merchants_file.open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['merchant', 'account_code', 'description', 'notes'], delimiter='\t')
+        writer = csv.DictWriter(f, fieldnames=['merchant', 'account_code', 'description'], delimiter='\t')
         writer.writeheader()
         writer.writerows(existing_rows)
     return added + updated
@@ -362,21 +357,18 @@ def main(argv: List[str]) -> int:
             account_code = (normalized_row.get('account_code') or normalized_row.get('Account Code') or '').strip()
             description = (normalized_row.get('description') or normalized_row.get('Description') or '').strip()
             learning_mode = (normalized_row.get('learning_mode') or normalized_row.get('learning mode') or '').strip().lower()
-            notes = (normalized_row.get('notes') or normalized_row.get('Notes') or '').strip()
             if txn_key and account_code and description:
                 reviewed_by_key[txn_key] = {
                     'merchant': merchant,
                     'account_code': account_code,
                     'description': description,
                     'learning_mode': learning_mode,
-                    'notes': notes,
                 }
                 if learning_mode == 'persistent' and merchant:
                     persistent_entries.append(EnrichedCategory(
                         merchant=merchant,
                         account_code=account_code,
                         description=description,
-                        notes=notes,
                     ))
         if persistent_entries:
             added = append_merchant_entries(persistent_entries, merchants_path)
