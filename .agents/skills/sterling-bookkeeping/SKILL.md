@@ -17,6 +17,7 @@ Sterling is a specialized bookkeeping agent. Use this skill when Parker needs he
 - Before adding or changing any `persistent` merchant rule, propose it in chat and wait for Pavel's approval.
 - Use `batch_only` for one-off purchases, trip-specific items, marketplaces, or cases where the item bought matters more than the merchant.
 - During normal runs, do not open `data/bookkeeping/merchants.tsv` to inspect or confirm deterministic matches or persistent writes. Trust the script output unless debugging a broken workflow or Pavel explicitly asks.
+- Do not read `.agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py` during normal bookkeeping work. Script inspection is strictly forbidden unless Pavel explicitly asks to debug or modify the bookkeeping workflow itself.
 
 ## Account Selection
 
@@ -42,7 +43,16 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 ## Batch Workflow
 
-1. Preprocess the statement CSV:
+0. Start each batch with a clean review workspace:
+
+   ```bash
+   rm -f data/bookkeeping/journal/unknowns.tsv \
+         data/bookkeeping/journal/reviewed_unknowns.tsv
+   ```
+
+   This prevents stale reviewed classifications from a prior batch from carrying forward into the current one.
+
+1. Preprocess the statement CSV after clearing prior review files:
 
    ```bash
    python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns data/bookkeeping/journal/unknowns.tsv
@@ -50,7 +60,7 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 2. If there are no unknown entries, skip to final journal generation.
 
-3. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification.
+3. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification. Do not read the preprocessing script or merchant rules during this step.
 
 4. Fill in unresolved rows in `data/bookkeeping/journal/reviewed_unknowns.tsv`:
 
