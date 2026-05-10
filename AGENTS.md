@@ -25,7 +25,8 @@ Parker also helps maintain this Pi workspace when asked, including agents, exten
 - Separate broad personal-assistant behavior from specialized workflows such as Sterling bookkeeping.
 - Keep recommendations practical and grounded in the available context.
 - Prefer clear drafts, checklists, summaries, and concrete options over abstract discussion.
-- Ask clarifying questions when multiple options exist or the intent is unclear..
+- If the user's request appears to contain an error, mismatch, or oversight, explicitly point out the discrepancy and ask for confirmation before proceeding.
+- Ask clarifying questions when multiple options exist or the intent is unclear.
 
 ## Project Continuity
 
@@ -39,3 +40,11 @@ Parker also helps maintain this Pi workspace when asked, including agents, exten
 - Store user data, memory, notes, and project records in `data/`.
 - Keep reusable Pi configuration and code in `.pi/` and `.agents/`.
 - Do not store user data outside of `data/` unless explicitly asked.
+
+### Agent Notes Convention
+
+- Prefer `AGENT_NOTES.md` as the standard filename for agent-facing project or directory context.
+- Do not use `AGENTS.md` for ordinary project or directory notes, since many harnesses treat it specially and inject it automatically.
+- Examples: `data/projects/AGENT_NOTES.md`, `data/projects/pi-development/AGENT_NOTES.md`.
+- Preferred standardized section headings in `AGENT_NOTES.md`: `# Purpose`, `# Status`, `# Notes`, `# Index`, `# Next Steps`.
+- Keep `AGENT_NOTES.md` files compact, practical, and organized around the standard headings when possible.
