@@ -450,7 +450,9 @@ def render_html(payload: dict) -> str:
         <div class="toolbar-controls">
           <div class="range-toggle" id="range-toggle">
             <button type="button" data-range="7w" data-active="true">Past 7 weeks</button>
-            <button type="button" data-range="1m" data-active="false">Past month</button>
+            <button type="button" data-range="4w" data-active="false">Past 4 weeks</button>
+            <button type="button" data-range="1w" data-active="false">Last 7 days</button>
+            <button type="button" data-range="pw" data-active="false">Previous 7 days</button>
             <button type="button" data-range="custom" data-active="false">Custom</button>
           </div>
           <button type="button" class="legend-toggle" id="legend-toggle" data-active="false">Show legends</button>
@@ -610,10 +612,17 @@ def render_html(payload: dict) -> str:
         if (start > end) return [];
         return allRows.filter(row => row.dateObj >= start && row.dateObj <= end);
       }}
+      if (rangeKey === "1w" || rangeKey === "pw") {{
+        const today = parseDate(isoDate(new Date()));
+        const endOffset = rangeKey === "1w" ? -1 : -8;
+        const end = addDays(today, endOffset);
+        const start = addDays(end, -6);
+        return allRows.filter(row => row.dateObj >= start && row.dateObj <= end);
+      }}
       const latestDate = allRows[allRows.length - 1].dateObj;
       const cutoff = new Date(latestDate);
-      if (rangeKey === "1m") {{
-        cutoff.setDate(cutoff.getDate() - 29);
+      if (rangeKey === "4w") {{
+        cutoff.setDate(cutoff.getDate() - 27);
       }} else {{
         cutoff.setDate(cutoff.getDate() - 48);
       }}
