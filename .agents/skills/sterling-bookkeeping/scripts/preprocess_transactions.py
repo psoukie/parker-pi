@@ -216,6 +216,15 @@ def write_text(path: Path, lines: Iterable[str]) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
+def clear_review_workspace(unknowns_path: Path, reviewed_unknowns_path: Path = DEFAULT_REVIEWED_UNKNOWNS) -> List[Path]:
+    removed: List[Path] = []
+    for path in (unknowns_path, reviewed_unknowns_path):
+        if path.exists():
+            path.unlink()
+            removed.append(path)
+    return removed
+
+
 def parse_enriched_file(path: Path) -> List[EnrichedCategory]:
     entries: List[EnrichedCategory] = []
     for row in read_tsv_rows(path):
@@ -395,11 +404,18 @@ def main(argv: List[str]) -> int:
         classified = updated_classified
 
     if write_unknowns:
+        removed_paths = clear_review_workspace(unknowns_path)
         unknown_lines = render_unknowns(classified)
         if len(unknown_lines) == 1:
+            if removed_paths:
+                removed_list = ', '.join(str(path) for path in removed_paths)
+                print(f'Removed stale review files: {removed_list}')
             print('The transaction CSV does not contain any unknown entries.')
             return 0
         write_text(unknowns_path, unknown_lines)
+        if removed_paths:
+            removed_list = ', '.join(str(path) for path in removed_paths)
+            print(f'Removed stale review files: {removed_list}')
         print(f'Wrote unknowns report to {unknowns_path}')
         return 0
 

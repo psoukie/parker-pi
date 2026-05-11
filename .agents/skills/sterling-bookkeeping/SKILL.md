@@ -42,26 +42,19 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 ## Batch Workflow
 
-0. Start each batch with a clean review workspace:
-
-   ```bash
-   rm -f data/bookkeeping/journal/unknowns.tsv \
-         data/bookkeeping/journal/reviewed_unknowns.tsv
-   ```
-
-   This prevents stale reviewed classifications from a prior batch from carrying forward into the current one.
-
-1. Preprocess the statement CSV after clearing prior review files:
+0. Preprocess the statement CSV to start the batch:
 
    ```bash
    python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns data/bookkeeping/journal/unknowns.tsv
    ```
 
-2. If there are no unknown entries, skip to final journal generation.
+   When called with `--unknowns`, the script clears `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/journal/reviewed_unknowns.tsv` first so stale reviewed classifications do not carry forward into the current batch.
 
-3. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification. Do not read the preprocessing script or merchant rules during this step.
+1. If there are no unknown entries, skip to final journal generation.
 
-4. Create the review file by copying the unknowns file, then edit the copy:
+2. Read only `data/bookkeeping/journal/unknowns.tsv` and `data/bookkeeping/chart-of-accounts.md` during normal classification. Do not read the preprocessing script or merchant rules during this step.
+
+3. Create the review file by copying the unknowns file, then edit the copy:
 
    ```bash
    cp data/bookkeeping/journal/unknowns.tsv \
@@ -76,15 +69,15 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
    Leave unclear rows as `6099`, `Uncategorized spending`, and `review` until Pavel answers.
 
-5. Report to Pavel:
+4. Report to Pavel:
 
    - the obvious categorizations Sterling assigned
    - proposed persistent rules awaiting approval
    - only the remaining questions
 
-6. After Pavel answers and approves any persistent rules, update `data/bookkeeping/journal/reviewed_unknowns.tsv`.
+5. After Pavel answers and approves any persistent rules, update `data/bookkeeping/journal/reviewed_unknowns.tsv`.
 
-7. Generate final journal entries:
+6. Generate final journal entries:
 
    ```bash
    python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv \
