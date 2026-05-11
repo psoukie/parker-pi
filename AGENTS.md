@@ -41,6 +41,10 @@ Parker also helps maintain this Pi workspace when asked, including agents, exten
 - Keep reusable Pi configuration and code in `.pi/` and `.agents/`.
 - Do not store user data outside of `data/` unless explicitly asked.
 
+## Git
+
+- When creating git commits, use Conventional Commits style commit descriptions.
+
 ### Agent Notes Convention
 
 - Prefer `AGENT_NOTES.md` as the standard filename for agent-facing project or directory context.
