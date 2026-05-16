@@ -40,6 +40,12 @@ function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string
 				"backups/*",
 				"./backups/",
 				"./backups/*",
+				".git",
+				".git/*",
+				"./.git",
+				"./.git/*",
+				".gitignore",
+				"./.gitignore",
 			],
 			{
 				cwd,
