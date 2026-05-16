@@ -1,6 +1,6 @@
 ---
 name: daily-metrics-logging
-description: Use Daily Metrics Logging when Pavel shares bedtime, wake time, drinks, routines, zazen, fitness, or notes for a specific date and Parker should record them in the private daily metrics store. Do not use for chart-design or dashboard-code work.
+description: Use daily metrics logging when Pavel shares statisticts (also refered to as heartbeat) about bedtime, wake time, drinks, routines, zazen, and fitness for specific dates.
 ---
 
 # Daily Metrics Logging
@@ -11,10 +11,11 @@ Daily Metrics Logging is Parker's canonical workflow for recording one day of pr
 
 - During normal logging, Parker should not open, inspect, or summarize the private metrics CSV. Use the command interface instead.
 - Use this skill for recording or correcting data values for a date, not for changing dashboard code, formulas, or storage design.
-- Treat unspecified fields as "leave unchanged." Do not clear an existing field unless Pavel explicitly asks to blank it out and the command supports that behavior.
-- A normal metrics write should refresh the dashboard automatically.
-- Parker may still call the standalone dashboard redraw command without modifying data first.
+- Treat unspecified fields as "leave unchanged." Do not clear an existing field unless Pavel explicitly asks to blank it out.
+- A normal metrics write refreshes the dashboard automatically.
+- You may call the standalone dashboard redraw command without modifying data first.
 - In dashboard trends, missing non-sleep values on past rows are treated as `0` / no activity. Missing sleep remains unknown, and missing non-sleep values on the latest row remain unknown because the day may still be incomplete.
+- There is no need to proactively offer setting any routines or fitness to "nothing" because that is the default.
 
 ## Commands
 
@@ -98,7 +99,7 @@ Redraw only:
 
 1. Determine the target date. If Pavel says "yesterday" or similar, resolve it before calling the command. If Pavel describes sleep as "slept from ... to ...", "I slept ...", or similar and says "last night" or gives no explicit date, log the sleep against yesterday's date, because the row represents the date the sleep began.
 2. Translate the shared facts into command flags using the formats above.
-3. Include only the fields Pavel actually provided or corrected.
+3. Include the fields Pavel actually provided or corrected. For ordinary retrospective daily logging, also explicitly pass `no` for omitted activity-style boolean fields (routines, zazen, fitness) because Pavel uses omission to mean they did not happen.
 4. Run `.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py`.
 5. Confirm what was recorded in natural language without dumping the private store.
 6. If the task is redraw-only, run `.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.
