@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+USER_DATA_DIR = Path(os.environ.get("USER_DATA", Path.home() / "user_data"))
 
 from sleep_metrics import CSV_FIELDS, _optional_bool, ensure_daily_metrics_csv, parse_clock  # noqa: E402
 
@@ -36,13 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--notes", help="Free text note for the date.")
     parser.add_argument(
         "--data",
-        default="data/metrics/daily-metrics.csv",
-        help="Path to the private daily metrics CSV. Defaults to Parker's ignored local data.",
+        default=str(USER_DATA_DIR / "metrics" / "daily-metrics.csv"),
+        help="Path to the private daily metrics CSV. Defaults to $USER_DATA/metrics/daily-metrics.csv, or ~/user_data/metrics/daily-metrics.csv if USER_DATA is unset.",
     )
     parser.add_argument(
         "--render-output",
-        default="data/artifacts/daily-metrics-dashboard.html",
-        help="Dashboard HTML output path to refresh after writing the metrics row.",
+        default=str(USER_DATA_DIR / "artifacts" / "daily-metrics-dashboard.html"),
+        help="Dashboard HTML output path to refresh after writing the metrics row. Defaults to $USER_DATA/artifacts/daily-metrics-dashboard.html, or ~/user_data/artifacts/daily-metrics-dashboard.html if USER_DATA is unset.",
     )
     return parser.parse_args()
 

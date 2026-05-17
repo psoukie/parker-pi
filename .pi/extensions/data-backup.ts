@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const USER_DATA_DIR = process.env.USER_DATA || path.join(os.homedir(), "user_data");
 
 function todayString() {
 	const now = new Date();
@@ -11,15 +14,15 @@ function todayString() {
 	return `${year}-${month}-${day}`;
 }
 
-function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string; skipped?: string; error?: string } {
-	if (!fs.existsSync(cwd)) {
-		return { created: false, skipped: `Working directory not found: ${cwd}` };
+function ensureDailyBackup(dataDir: string): { created: boolean; backupPath?: string; skipped?: string; error?: string } {
+	if (!fs.existsSync(dataDir)) {
+		return { created: false, skipped: `Parker data directory not found: ${dataDir}` };
 	}
 
-	const backupsDir = path.join(cwd, "backups");
+	const backupsDir = path.join(dataDir, "backups");
 	fs.mkdirSync(backupsDir, { recursive: true });
 
-	const backupName = `${todayString()}-workspace.zip`;
+	const backupName = `${todayString()}-user_data.zip`;
 	const backupPath = path.join(backupsDir, backupName);
 	if (fs.existsSync(backupPath)) {
 		return { created: false, backupPath };
@@ -38,17 +41,9 @@ function ensureDailyBackup(cwd: string): { created: boolean; backupPath?: string
 				"-x",
 				"backups/",
 				"backups/*",
-				"./backups/",
-				"./backups/*",
-				".git",
-				".git/*",
-				"./.git",
-				"./.git/*",
-				".gitignore",
-				"./.gitignore",
 			],
 			{
-				cwd,
+				cwd: dataDir,
 				encoding: "utf8",
 			},
 		);
@@ -74,25 +69,30 @@ export default function dataBackupExtension(pi: ExtensionAPI) {
 		if (process.env.PI_SUBAGENT === "1") return;
 
 		shouldClearOnFirstPrompt = false;
-		const result = ensureDailyBackup(ctx.cwd);
+		const result = ensureDailyBackup(USER_DATA_DIR);
 		if (!ctx.hasUI) return;
 
 		const theme = ctx.ui.theme;
 		if (result.created) {
-			ctx.ui.setWidget("data-backup", [theme.fg("dim", `backup: ok (created ${path.relative(ctx.cwd, result.backupPath ?? "")})`)]);
+			ctx.ui.setWidget("data-backup", [theme.fg("dim", `backup: ok (created ${result.backupPath ?? ""})`)]);
 			shouldClearOnFirstPrompt = true;
 			return;
 		}
 		if (result.backupPath) {
 			ctx.ui.setWidget(
 				"data-backup",
-				[theme.fg("dim", `backup: ok (${path.relative(ctx.cwd, result.backupPath)} already exists)`)],
+				[theme.fg("dim", `backup: ok (${result.backupPath} already exists)`)],
 			);
 			shouldClearOnFirstPrompt = true;
 			return;
 		}
 		if (result.error) {
 			ctx.ui.setWidget("data-backup", [theme.fg("warning", `backup failed: ${result.error}`)]);
+			shouldClearOnFirstPrompt = true;
+			return;
+		}
+		if (result.skipped) {
+			ctx.ui.setWidget("data-backup", [theme.fg("warning", `backup skipped: ${result.skipped}`)]);
 			shouldClearOnFirstPrompt = true;
 			return;
 		}

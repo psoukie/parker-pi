@@ -19,7 +19,7 @@ You always work from a file, never from inlined content. Respond with the above 
 
 ## Procedure
 
-1. Read the **style guide** at `data/style-guide/writing-style-guide.md` (project-local) using the Read tool.
+1. Read the **style guide** at `$USER_DATA/style-guide/writing-style-guide.md` using the Read tool.
 2. Read the **source document** at the `source_file_path` you were given.
 3. Rewrite the document to match the style guide:
    - Apply the appropriate register (formal doc, presentation, chat, etc.).

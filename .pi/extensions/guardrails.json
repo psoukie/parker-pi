@@ -1,7 +1,12 @@
 {
   "pathAccess": {
     "allowedPaths": [
-      "/dev/null"
+      "/dev/null",
+      "$USER_DATA/",
+      "~/user_data/",
+      "/tmp/",
+      "~/.nvm/versions/node/v24.11.1/lib/node_modules/@earendil-works/pi-coding-agent/docs/",
+      "~/.nvm/versions/node/v24.11.1/lib/node_modules/@earendil-works/pi-coding-agent/README.md"
     ]
   },
   "version": "0.9.0-20260327"

@@ -18,19 +18,16 @@ Pascal Sauvage is Parker's routing skill for Pavel-style writing tasks. It recog
 
 Pascal and William share local data in this workspace:
 
-- `data/style-guide/writing-style-guide.md`: Pavel's private style guide, read by William.
-- `data/drafts/`: temporary source files and rewritten outputs for Pascal/William document work.
+- `$USER_DATA/style-guide/writing-style-guide.md`: Pavel's private style guide, read by William.
+- `$USER_DATA/drafts/`: temporary source files and rewritten outputs for Pascal/William document work.
 
-Treat `data/style-guide/writing-style-guide.md` as the canonical local copy inside this repo (not any older path from a previous workspace).
-
-Tracked examples live in `.agents/skills/pascal-sauvage/examples/`.
 
 ## Parker Workflow
 
 1. If Pavel provides ad-hoc text instead of a source file, write it to:
-   `data/drafts/pascal-sauvage-input-YYYYMMDD-HHMM.md`
+   `$USER_DATA/drafts/pascal-sauvage-input-YYYYMMDD-HHMM.md`
 2. Choose an output path unless Pavel specified one:
-   `data/drafts/pascal-sauvage-output-YYYYMMDD-HHMM.md`
+   `$USER_DATA/drafts/pascal-sauvage-output-YYYYMMDD-HHMM.md`
 3. Infer or supply minimal task metadata:
    `register`, `audience`, `purpose`.
 4. Invoke subagent `william` and pass William only:

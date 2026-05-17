@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+USER_DATA_DIR = Path(os.environ.get("USER_DATA", Path.home() / "user_data"))
 
 from sleep_metrics import bedtime_axis_hour, ema_sparse, fitness_score, parse_clock, read_daily_metrics_csv, routine_score
 
@@ -12,13 +15,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render Parker's local daily metrics dashboard.")
     parser.add_argument(
         "--data",
-        default="data/metrics/daily-metrics.csv",
-        help="Path to daily metrics CSV. Defaults to ignored Parker local data.",
+        default=str(USER_DATA_DIR / "metrics" / "daily-metrics.csv"),
+        help="Path to daily metrics CSV. Defaults to $USER_DATA/metrics/daily-metrics.csv, or ~/user_data/metrics/daily-metrics.csv if USER_DATA is unset.",
     )
     parser.add_argument(
         "--output",
-        default="data/artifacts/daily-metrics-dashboard.html",
-        help="Dashboard HTML output path.",
+        default=str(USER_DATA_DIR / "artifacts" / "daily-metrics-dashboard.html"),
+        help="Dashboard HTML output path. Defaults to $USER_DATA/artifacts/daily-metrics-dashboard.html, or ~/user_data/artifacts/daily-metrics-dashboard.html if USER_DATA is unset.",
     )
     parser.add_argument("--fast-alpha", type=float, default=1 / 7)
     parser.add_argument("--slow-alpha", type=float, default=1 / 42)

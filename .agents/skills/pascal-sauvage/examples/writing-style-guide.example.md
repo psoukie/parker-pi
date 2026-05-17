@@ -1,6 +1,6 @@
 # Example Writing Style Guide
 
-This is a template for `data/style-guide/writing-style-guide.md`. Replace it with Pavel's actual private style guide in the project-local `data/style-guide/` folder.
+This is a template for `$USER_DATA/style-guide/writing-style-guide.md`. Replace it with Pavel's actual private style guide in `$USER_DATA/style-guide/`.
 
 ## Core Principles
 
