@@ -99,7 +99,7 @@ Redraw only:
 
 1. Determine the target date. If Pavel says "yesterday" or similar, resolve it before calling the command. If Pavel describes sleep as "slept from ... to ...", "I slept ...", or similar and says "last night" or gives no explicit date, log the sleep against yesterday's date, because the row represents the date the sleep began.
 2. Translate the shared facts into command flags using the formats above.
-3. Include the fields Pavel actually provided or corrected. For ordinary retrospective daily logging, also explicitly pass `no` for omitted activity-style boolean fields (routines, zazen, fitness) because Pavel uses omission to mean they did not happen.
+3. Include only the fields Pavel actually provided or corrected. Do not infer or write `no` for omitted activity-style boolean fields (routines, zazen, fitness); omission means leave the stored value unchanged.
 4. Run `.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py`.
 5. Confirm what was recorded in natural language without dumping the private store.
 6. If the task is redraw-only, run `.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.
