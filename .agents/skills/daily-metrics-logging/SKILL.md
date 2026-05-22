@@ -1,16 +1,16 @@
 ---
 name: daily-metrics-logging
-description: Use daily metrics logging when Pavel shares statisticts (also refered to as heartbeat) about bedtime, wake time, drinks, routines, zazen, and fitness for specific dates.
+description: Use daily metrics logging when Pavel shares 'heartbeat' statistics of sleep, bedtime, drinks, routines, or zazen for specific dates, or when the agent needs summary stats for preset or custom date ranges.
 ---
 
 # Daily Metrics Logging
 
-Daily Metrics Logging is Parker's canonical workflow for recording one day of private metrics without exposing or hand-editing the underlying storage file.
+Daily Metrics Logging is Parker's canonical workflow for recording private heartbeat metrics and for retrieving dashboard-mirrored summary stats without exposing or hand-editing the underlying storage file.
 
 ## Operating Contract
 
-- During normal logging, Parker should not open, inspect, or summarize the private metrics CSV. Use the command interface instead.
-- Use this skill for recording or correcting data values for a date, not for changing dashboard code, formulas, or storage design.
+- During normal logging or summary lookup, Parker should not open, inspect, or summarize the private metrics CSV directly. Use the command interface instead.
+- Use this skill for recording or correcting data values for a date, redrawing the dashboard, or retrieving summary stats for review/planning conversations; not for changing dashboard code, formulas, or storage design.
 - Treat unspecified fields as "leave unchanged." Do not clear an existing field unless Pavel explicitly asks to blank it out.
 - A normal metrics write refreshes the dashboard automatically.
 - You may call the standalone dashboard redraw command without modifying data first.
@@ -33,7 +33,15 @@ Standalone redraw command:
 .agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
 ```
 
+Summary command:
+
+```bash
+.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
+```
+
 The logging command inserts a new row for the date if none exists, or updates the existing row for that date while preserving any fields not provided in the command. After a successful write, it redraws the dashboard automatically.
+
+The summary command returns dashboard-mirrored averages for a preset or custom range without modifying data.
 
 ## Accepted Fields
 
@@ -95,7 +103,27 @@ Redraw only:
 .agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
 ```
 
+Last 7 days summary:
+
+```bash
+.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
+```
+
+Previous 7 days summary as JSON:
+
+```bash
+.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset pw --json
+```
+
+Custom range summary:
+
+```bash
+.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --start 2026-05-01 --end 2026-05-20
+```
+
 ## Parker Workflow
+
+### Logging Data
 
 1. Determine the target date. If Pavel says "yesterday" or similar, resolve it before calling the command. If Pavel describes sleep as "slept from ... to ...", "I slept ...", or similar and says "last night" or gives no explicit date, log the sleep against yesterday's date, because the row represents the date the sleep began.
 2. Translate the shared facts into command flags using the formats above.
@@ -104,8 +132,15 @@ Redraw only:
 5. Confirm what was recorded in natural language without dumping the private store.
 6. If the task is redraw-only, run `.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.
 
+### Reading Data
+
+If you need to retrieve averages such as last 7 days vs previous 7 days, past 4 weeks, past 7 weeks, or a custom metrics summary for review/planning, run `.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py` rather than reading the CSV or scraping the HTML.
+
+When retrieving or reporting summaries, note that the CLI intentionally mirrors current dashboard semantics: `1w` and `pw` are anchored to today/yesterday logic, while `4w` and `7w` are anchored to the latest data row.
+
 ## Boundaries
 
-- Do not read the private metrics file during ordinary logging unless debugging a broken workflow or Pavel explicitly asks to inspect the stored data.
+- Do not read the private metrics file during ordinary logging or summary lookup unless debugging a broken workflow or Pavel explicitly asks to inspect the stored data.
 - Do not use this skill for dashboard project development; resume the sleep dashboard project instead.
 - If the command cannot import its helpers or cannot write output, do not hand-edit the CSV. First confirm the command was run from the project root and that the bundled skill scripts are present.
+- If future dashboard range or averaging semantics change, update the summary command in lockstep so Parker's programmatic summaries keep mirroring the dashboard.
