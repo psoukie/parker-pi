@@ -7,8 +7,10 @@ const CUSTOM_TYPE = "tree-sub";
 const WIDGET_ID = "tree-sub";
 const ORIGIN_LABEL = "branch-origin";
 const RETURN_LABEL = "branch-return";
+const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conversation history. The next user message defines the branch task.";
 
 type AgentScope = "user" | "project" | "both";
+type BranchContextMode = "full" | "none";
 
 interface AgentConfig {
 	name: string;
@@ -29,6 +31,7 @@ interface TreeSubState {
 	originId: string;
 	startEntryId: string;
 	agentName?: string;
+	contextMode?: BranchContextMode;
 }
 
 interface TreeSubEntryData {
@@ -37,9 +40,17 @@ interface TreeSubEntryData {
 	originId: string;
 	startEntryId?: string;
 	agentName?: string;
+	contextMode?: BranchContextMode;
 	forget?: boolean;
 	timestamp: string;
 }
+
+interface PendingContextReset {
+	startEntryId: string;
+	firstKeptEntryId: string;
+}
+
+let pendingContextReset: PendingContextReset | undefined;
 
 function isSubagentProcess() {
 	return process.env.PI_SUBAGENT === "1";
@@ -140,12 +151,14 @@ function parseTreeSubEntryData(data: unknown): TreeSubEntryData | undefined {
 	if (value.version !== 1) return undefined;
 	if (value.event !== "start" && value.event !== "return" && value.event !== "cancel") return undefined;
 	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
+	const contextMode = value.contextMode === "full" || value.contextMode === "none" ? value.contextMode : undefined;
 	return {
 		version: 1,
 		event: value.event,
 		originId: value.originId.trim(),
 		startEntryId: typeof value.startEntryId === "string" && value.startEntryId.trim() ? value.startEntryId.trim() : undefined,
 		agentName: typeof value.agentName === "string" && value.agentName.trim() ? value.agentName.trim() : undefined,
+		contextMode,
 		forget: typeof value.forget === "boolean" ? value.forget : undefined,
 		timestamp: typeof value.timestamp === "string" && value.timestamp.trim() ? value.timestamp.trim() : "",
 	};
@@ -164,6 +177,7 @@ function readSubState(ctx: ExtensionContext): TreeSubState | undefined {
 				originId: data.originId,
 				startEntryId: entry.id,
 				agentName: data.agentName,
+				contextMode: data.contextMode,
 			};
 			continue;
 		}
@@ -176,18 +190,19 @@ function readSubState(ctx: ExtensionContext): TreeSubState | undefined {
 	return active;
 }
 
-function appendStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string): TreeSubState {
+function appendStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): TreeSubState {
 	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
 		version: 1,
 		event: "start",
 		originId,
 		agentName,
+		contextMode,
 		timestamp: new Date().toISOString(),
 	});
 
 	const startEntryId = ctx.sessionManager.getLeafId();
 	if (!startEntryId) throw new Error("Failed to append tree-sub start state.");
-	return { originId, startEntryId, agentName };
+	return { originId, startEntryId, agentName, contextMode };
 }
 
 function appendReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolean) {
@@ -197,6 +212,7 @@ function appendReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolea
 		originId: state.originId,
 		startEntryId: state.startEntryId,
 		agentName: state.agentName,
+		contextMode: state.contextMode,
 		forget,
 		timestamp: new Date().toISOString(),
 	});
@@ -244,6 +260,14 @@ async function selectAgentProfile(ctx: ExtensionCommandContext): Promise<string 
 	return choice.split(" ", 1)[0];
 }
 
+async function selectContextMode(ctx: ExtensionCommandContext): Promise<BranchContextMode | null> {
+	const full = "Full context";
+	const none = "No prior context";
+	const choice = await ctx.ui.select("Start branch with which context?", [full, none]);
+	if (!choice) return null;
+	return choice === none ? "none" : "full";
+}
+
 function resolveAgent(ctx: ExtensionContext, agentName: string | undefined, agentScope: AgentScope): { agent?: AgentConfig; error?: string } {
 	if (!agentName) return {};
 	const discovery = discoverAgents(ctx.cwd, agentScope);
@@ -262,8 +286,8 @@ function startSubBranch(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	prompt: string,
-	options?: { agentName?: string; agentScope?: AgentScope; deliverAs?: "followUp" | "steer" },
-): { ok: true; originId: string; prompt: string; agentName?: string } | { ok: false; error: string } {
+	options?: { agentName?: string; agentScope?: AgentScope; deliverAs?: "followUp" | "steer"; contextMode?: BranchContextMode; deferPrompt?: boolean },
+): { ok: true; originId: string; prompt: string; agentName?: string; state: TreeSubState; contextBaseEntryId: string } | { ok: false; error: string } {
 	if (isSubagentProcess()) return { ok: false, error: "tree-sub is disabled inside subprocess subagents." };
 
 	const existingState = readSubState(ctx);
@@ -280,11 +304,15 @@ function startSubBranch(
 	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
 	if (resolved.error) return { ok: false, error: resolved.error };
 
-	const state = appendStartState(pi, ctx, originId, resolved.agent?.name);
+	const state = appendStartState(pi, ctx, originId, resolved.agent?.name, options?.contextMode);
 	pi.setLabel(originId, ORIGIN_LABEL);
+	const contextBaseEntryId = ctx.sessionManager.getLeafId();
+	if (!contextBaseEntryId) return { ok: false, error: "Failed to identify branch context base entry." };
 	setSubWidget(ctx, state);
-	pi.sendUserMessage(prompt, options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
-	return { ok: true, originId, prompt, agentName: resolved.agent?.name };
+	if (!options?.deferPrompt) {
+		pi.sendUserMessage(prompt, options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
+	}
+	return { ok: true, originId, prompt, agentName: resolved.agent?.name, state, contextBaseEntryId };
 }
 
 function defaultReturnInstructions(focus?: string) {
@@ -315,6 +343,9 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
+	const contextMode = await selectContextMode(ctx);
+	if (contextMode === null) return;
+
 	const selectedAgent = await selectAgentProfile(ctx);
 	if (selectedAgent === null) return;
 
@@ -325,13 +356,30 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
-	const result = startSubBranch(pi, ctx, enteredPrompt.trim(), { agentName: selectedAgent, agentScope: "project" });
+	const prompt = enteredPrompt.trim();
+	const result = startSubBranch(pi, ctx, prompt, { agentName: selectedAgent, agentScope: "project", contextMode, deferPrompt: contextMode === "none" });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
 	}
 
 	const agentText = result.agentName ? ` using agent profile ${result.agentName}` : "";
+	if (contextMode === "none") {
+		pendingContextReset = { startEntryId: result.state.startEntryId, firstKeptEntryId: result.contextBaseEntryId };
+		notify(ctx, `Preparing no-context branch from ${result.originId}${agentText}...`, "info");
+		ctx.compact({
+			onComplete: () => {
+				pi.sendUserMessage(prompt);
+				notify(ctx, `Started no-context branch from ${result.originId}${agentText}`, "info");
+			},
+			onError: (error) => {
+				pendingContextReset = undefined;
+				notify(ctx, `Failed to prepare no-context branch: ${error.message}`, "error");
+			},
+		});
+		return;
+	}
+
 	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
 }
 
@@ -400,6 +448,31 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
 		setSubWidget(ctx, readSubState(ctx));
+	});
+
+	pi.on("session_before_compact", async (event, ctx) => {
+		if (isSubagentProcess()) return;
+		if (!pendingContextReset) return;
+
+		const reset = pendingContextReset;
+		pendingContextReset = undefined;
+		if (!ctx.sessionManager.getEntry(reset.firstKeptEntryId)) {
+			notify(ctx, "No-context branch setup failed: context reset point no longer exists.", "error");
+			return { cancel: true };
+		}
+
+		return {
+			compaction: {
+				summary: NO_CONTEXT_SUMMARY,
+				firstKeptEntryId: reset.firstKeptEntryId,
+				tokensBefore: event.preparation.tokensBefore,
+				details: {
+					customType: CUSTOM_TYPE,
+					contextMode: "none",
+					startEntryId: reset.startEntryId,
+				},
+			},
+		};
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
