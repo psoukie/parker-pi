@@ -10,7 +10,7 @@ const RETURN_LABEL = "branch-return";
 const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conversation history. The next user message defines the branch task.";
 
 type AgentScope = "user" | "project" | "both";
-type BranchContextMode = "full" | "none";
+type BranchContextMode = "full" | "compacted" | "none";
 
 interface AgentConfig {
 	name: string;
@@ -151,7 +151,7 @@ function parseTreeSubEntryData(data: unknown): TreeSubEntryData | undefined {
 	if (value.version !== 1) return undefined;
 	if (value.event !== "start" && value.event !== "return" && value.event !== "cancel") return undefined;
 	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
-	const contextMode = value.contextMode === "full" || value.contextMode === "none" ? value.contextMode : undefined;
+	const contextMode = value.contextMode === "full" || value.contextMode === "compacted" || value.contextMode === "none" ? value.contextMode : undefined;
 	return {
 		version: 1,
 		event: value.event,
@@ -262,9 +262,11 @@ async function selectAgentProfile(ctx: ExtensionCommandContext): Promise<string 
 
 async function selectContextMode(ctx: ExtensionCommandContext): Promise<BranchContextMode | null> {
 	const full = "Full context";
+	const compacted = "Compacted context";
 	const none = "No prior context";
-	const choice = await ctx.ui.select("Start branch with which context?", [full, none]);
+	const choice = await ctx.ui.select("Start branch with which context?", [full, compacted, none]);
 	if (!choice) return null;
+	if (choice === compacted) return "compacted";
 	return choice === none ? "none" : "full";
 }
 
@@ -357,7 +359,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	}
 
 	const prompt = enteredPrompt.trim();
-	const result = startSubBranch(pi, ctx, prompt, { agentName: selectedAgent, agentScope: "project", contextMode, deferPrompt: contextMode === "none" });
+	const result = startSubBranch(pi, ctx, prompt, { agentName: selectedAgent, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
@@ -375,6 +377,20 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 			onError: (error) => {
 				pendingContextReset = undefined;
 				notify(ctx, `Failed to prepare no-context branch: ${error.message}`, "error");
+			},
+		});
+		return;
+	}
+
+	if (contextMode === "compacted") {
+		notify(ctx, `Preparing compacted-context branch from ${result.originId}${agentText}...`, "info");
+		ctx.compact({
+			onComplete: () => {
+				pi.sendUserMessage(prompt);
+				notify(ctx, `Started compacted-context branch from ${result.originId}${agentText}`, "info");
+			},
+			onError: (error) => {
+				notify(ctx, `Failed to prepare compacted-context branch: ${error.message}`, "error");
 			},
 		});
 		return;
