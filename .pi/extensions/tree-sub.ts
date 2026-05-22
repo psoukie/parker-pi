@@ -1,68 +1,102 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./subagent/agents.js";
 
-const USER_DATA_DIR = process.env.USER_DATA || path.join(os.homedir(), "user_data");
-const STATE_DIR = path.join(USER_DATA_DIR, "state", "pi-tree-sub");
+const CUSTOM_TYPE = "tree-sub";
 const WIDGET_ID = "tree-sub";
 const ORIGIN_LABEL = "sub-origin";
 const RETURN_LABEL = "sub-return";
 
 interface TreeSubState {
 	originId: string;
+	startEntryId: string;
 	agentName?: string;
+}
+
+interface TreeSubEntryData {
+	version: 1;
+	event: "start" | "return" | "cancel";
+	originId: string;
+	startEntryId?: string;
+	agentName?: string;
+	forget?: boolean;
+	timestamp: string;
 }
 
 function isSubagentProcess() {
 	return process.env.PI_SUBAGENT === "1";
 }
 
-function ensureStateDir() {
-	fs.mkdirSync(STATE_DIR, { recursive: true });
+function isTreeSubEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: TreeSubEntryData } {
+	return entry.type === "custom" && entry.customType === CUSTOM_TYPE;
 }
 
-function statePath(ctx: ExtensionContext) {
-	const sessionId = ctx.sessionManager.getSessionId();
-	return path.join(STATE_DIR, `${sessionId}.txt`);
+function parseTreeSubEntryData(data: unknown): TreeSubEntryData | undefined {
+	if (!data || typeof data !== "object") return undefined;
+	const value = data as Partial<TreeSubEntryData>;
+	if (value.version !== 1) return undefined;
+	if (value.event !== "start" && value.event !== "return" && value.event !== "cancel") return undefined;
+	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
+	return {
+		version: 1,
+		event: value.event,
+		originId: value.originId.trim(),
+		startEntryId: typeof value.startEntryId === "string" && value.startEntryId.trim() ? value.startEntryId.trim() : undefined,
+		agentName: typeof value.agentName === "string" && value.agentName.trim() ? value.agentName.trim() : undefined,
+		forget: typeof value.forget === "boolean" ? value.forget : undefined,
+		timestamp: typeof value.timestamp === "string" && value.timestamp.trim() ? value.timestamp.trim() : "",
+	};
 }
 
 function readSubState(ctx: ExtensionContext): TreeSubState | undefined {
-	const file = statePath(ctx);
-	if (!fs.existsSync(file)) return undefined;
-	const value = fs.readFileSync(file, "utf8").trim();
-	if (!value) return undefined;
+	let active: TreeSubState | undefined;
 
-	try {
-		const parsed = JSON.parse(value) as Partial<TreeSubState>;
-		if (typeof parsed.originId === "string" && parsed.originId.trim()) {
-			return {
-				originId: parsed.originId.trim(),
-				agentName: typeof parsed.agentName === "string" && parsed.agentName.trim() ? parsed.agentName.trim() : undefined,
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (!isTreeSubEntry(entry)) continue;
+		const data = parseTreeSubEntryData(entry.data);
+		if (!data) continue;
+
+		if (data.event === "start") {
+			active = {
+				originId: data.originId,
+				startEntryId: entry.id,
+				agentName: data.agentName,
 			};
+			continue;
 		}
-	} catch {
-		// Backward compatibility with the original plain-text state file.
-		return { originId: value };
+
+		const matchesActiveStart = !data.startEntryId || data.startEntryId === active?.startEntryId;
+		const matchesActiveOrigin = data.originId === active?.originId;
+		if (active && matchesActiveOrigin && matchesActiveStart) active = undefined;
 	}
 
-	return undefined;
+	return active;
 }
 
-function readOriginId(ctx: ExtensionContext): string | undefined {
-	return readSubState(ctx)?.originId;
+function appendStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string): TreeSubState {
+	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
+		version: 1,
+		event: "start",
+		originId,
+		agentName,
+		timestamp: new Date().toISOString(),
+	});
+
+	const startEntryId = ctx.sessionManager.getLeafId();
+	if (!startEntryId) throw new Error("Failed to append tree-sub start state.");
+	return { originId, startEntryId, agentName };
 }
 
-function writeSubState(ctx: ExtensionContext, state: TreeSubState) {
-	ensureStateDir();
-	fs.writeFileSync(statePath(ctx), `${JSON.stringify(state)}\n`, "utf8");
-}
-
-function clearOriginId(ctx: ExtensionContext) {
-	const file = statePath(ctx);
-	if (fs.existsSync(file)) fs.rmSync(file, { force: true });
+function appendReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolean) {
+	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
+		version: 1,
+		event: "return",
+		originId: state.originId,
+		startEntryId: state.startEntryId,
+		agentName: state.agentName,
+		forget,
+		timestamp: new Date().toISOString(),
+	});
 }
 
 function setSubWidget(ctx: ExtensionContext, active: boolean) {
@@ -155,8 +189,8 @@ function startSubBranch(
 ): { ok: true; originId: string; prompt: string; agentName?: string } | { ok: false; error: string } {
 	if (isSubagentProcess()) return { ok: false, error: "tree-sub is disabled inside subprocess subagents." };
 
-	const existingOriginId = readOriginId(ctx);
-	if (existingOriginId) {
+	const existingState = readSubState(ctx);
+	if (existingState) {
 		return { ok: false, error: "Already inside a /sub branch. Use /return first; nested /sub is intentionally disabled." };
 	}
 
@@ -169,7 +203,7 @@ function startSubBranch(
 	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
 	if (resolved.error) return { ok: false, error: resolved.error };
 
-	writeSubState(ctx, { originId, agentName: resolved.agent?.name });
+	appendStartState(pi, ctx, originId, resolved.agent?.name);
 	pi.setLabel(originId, ORIGIN_LABEL);
 	setSubWidget(ctx, true);
 	pi.sendUserMessage(prompt, options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
@@ -211,9 +245,7 @@ const TreeSubStartParams = Type.Object({
 export default function treeSubExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
-		ensureStateDir();
-		clearOriginId(ctx);
-		setSubWidget(ctx, false);
+		setSubWidget(ctx, Boolean(readSubState(ctx)));
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -277,8 +309,8 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 
-			const existingOriginId = readOriginId(ctx);
-			if (existingOriginId) {
+			const existingState = readSubState(ctx);
+			if (existingState) {
 				notify(ctx, "Already inside a /sub branch. Use /return first; nested /sub is intentionally disabled.", "warning");
 				return;
 			}
@@ -327,26 +359,27 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 
-			const originId = readOriginId(ctx);
-			if (!originId) {
+			const state = readSubState(ctx);
+			if (!state) {
 				notify(ctx, "No active /sub branch found.", "warning");
 				return;
 			}
 
-			if (!ctx.sessionManager.getEntry(originId)) {
-				clearOriginId(ctx);
+			if (!ctx.sessionManager.getEntry(state.originId)) {
 				setSubWidget(ctx, false);
-				notify(ctx, `Stored /sub origin ${originId} no longer exists; cleared state.`, "error");
+				notify(ctx, `Stored /sub origin ${state.originId} no longer exists.`, "error");
 				return;
 			}
 
 			const { forget, focus } = parseReturnArgs(args);
 
 			await ctx.waitForIdle();
-			notify(ctx, forget ? `Returning to /sub origin ${originId} without summary...` : `Returning to /sub origin ${originId} with branch summary...`, "info");
+			notify(ctx, forget ? `Returning to /sub origin ${state.originId} without summary...` : `Returning to /sub origin ${state.originId} with branch summary...`, "info");
+
+			appendReturnState(pi, state, forget);
 
 			const result = await ctx.navigateTree(
-				originId,
+				state.originId,
 				forget
 					? undefined
 					: {
@@ -357,11 +390,10 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 			);
 
 			if (result.cancelled) {
-				notify(ctx, "/return cancelled; /sub state preserved.", "warning");
+				notify(ctx, "/return cancelled; /sub return marker was recorded but tree navigation was cancelled.", "warning");
 				return;
 			}
 
-			clearOriginId(ctx);
 			setSubWidget(ctx, false);
 			notify(ctx, "Returned from /sub branch.", "info");
 		},
