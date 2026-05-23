@@ -162,14 +162,15 @@ function parseBranchStateEntryData(data: unknown): BranchEntryData | undefined {
 }
 
 function readBranchState(ctx: ExtensionContext): BranchState | undefined {
-	let active: BranchState | undefined;
+	const branch = ctx.sessionManager.getBranch();
 
-	for (const entry of ctx.sessionManager.getBranch()) {
-		if (!isBranchStateEntry(entry)) continue;
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (!entry || !isBranchStateEntry(entry)) continue;
 		const data = parseBranchStateEntryData(entry.data);
 		if (!data) continue;
 
-		active = {
+		return {
 			originId: data.originId,
 			startEntryId: entry.id,
 			agentName: data.agentName,
@@ -177,7 +178,7 @@ function readBranchState(ctx: ExtensionContext): BranchState | undefined {
 		};
 	}
 
-	return active;
+	return undefined;
 }
 
 function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): BranchState {
@@ -343,11 +344,6 @@ function startBranch(
 	options?: { agentName?: string; agentScope?: AgentScope; deliverAs?: "followUp" | "steer"; contextMode?: BranchContextMode; deferPrompt?: boolean },
 ): { ok: true; originId: string; prompt: string; agentName?: string; state: BranchState; contextBaseEntryId: string } | { ok: false; error: string } {
 	if (isSubagentProcess()) return { ok: false, error: "tree-excursions is disabled inside subprocess subagents." };
-
-	const existingState = readBranchState(ctx);
-	if (existingState) {
-		return { ok: false, error: "Already inside a branch. Use /branch to return first; nested branches are intentionally disabled." };
-	}
 
 	const originId = ctx.sessionManager.getLeafId();
 	if (!originId) {
@@ -521,20 +517,20 @@ async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean, f
 	);
 
 	setBranchWidget(ctx, readBranchState(ctx));
-	notify(ctx, result.cancelled ? "/branch return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
+	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
 	return { ok: true, cancelled: result.cancelled };
 }
 
-async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
+async function showBranchReturnMenu(ctx: ExtensionCommandContext) {
 	const state = readBranchState(ctx);
 	setBranchWidget(ctx, state);
 
 	if (!state) {
-		await startBranchFromMenu(pi, ctx);
+		notify(ctx, "No active branch found.", "warning");
 		return;
 	}
 
-	const choice = await ctx.ui.select("Branch", ["Return with summary", "Return without summary"]);
+	const choice = await ctx.ui.select("Branch Return", ["Return with summary", "Return without summary"]);
 	if (!choice) return;
 
 	if (choice === "Return with summary") {
@@ -601,14 +597,15 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 		description: [
 			"Start a visible temporary branch task in the current Pi session tree.",
 			"Use when a subagent-style investigation is helpful but true parallel subprocess isolation is not required.",
-			"This queues the branch task; the user must later run /branch to summarize the branch and return to the origin.",
+			"This queues the branch task; the user must later run /branch-return to summarize the branch and return to the origin.",
+			"Nested branches are allowed; the closest branch start on the current session path determines active branch behavior.",
 			"Optionally provide a project-local agent profile name from .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
 		].join(" "),
-		promptSnippet: "excursion_start: start a branch task; user later runs /branch to summarize and return.",
+		promptSnippet: "excursion_start: start a branch task; user later runs /branch-return to summarize and return.",
 		promptGuidelines: [
 			"Prefer excursion_start over subprocess subagent delegation when the work should remain visible and inspectable in /tree and true parallelism is not needed.",
-			"Do not use excursion_start if already inside an active branch; nested branch work is intentionally disabled.",
-			"After starting an excursion branch, tell the user they can inspect it with /tree and should run /branch when they want to summarize and come back.",
+			"excursion_start may be used inside an active branch; the new nested branch becomes active while its path is current.",
+			"After starting an excursion branch, tell the user they can inspect it with /tree and should run /branch-return when they want to summarize and come back.",
 		],
 		parameters: ExcursionStartParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -631,7 +628,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Started branch from ${result.originId}${agentText}. The branch task has been queued; run /branch when ready to summarize and return.`,
+						text: `Started branch from ${result.originId}${agentText}. The branch task has been queued; run /branch-return when ready to summarize and return.`,
 					},
 				],
 			};
@@ -674,14 +671,26 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("branch", {
-		description: "Open the branch menu",
+		description: "Start a visible session-tree branch",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 			if (args.trim()) {
-				notify(ctx, "Run /branch with no arguments and choose an action from the menu.", "warning");
+				notify(ctx, "Run /branch with no arguments to start a branch.", "warning");
 				return;
 			}
-			await showBranchMenu(pi, ctx);
+			await startBranchFromMenu(pi, ctx);
+		},
+	});
+
+	pi.registerCommand("branch-return", {
+		description: "Return from the nearest active session-tree branch",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			if (isSubagentProcess()) return;
+			if (args.trim()) {
+				notify(ctx, "Run /branch-return with no arguments and choose summary behavior from the menu.", "warning");
+				return;
+			}
+			await showBranchReturnMenu(ctx);
 		},
 	});
 }
