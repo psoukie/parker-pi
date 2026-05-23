@@ -4,6 +4,9 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const USER_DATA_DIR = process.env.USER_DATA || path.join(os.homedir(), "user_data");
+const MEMORY_MESSAGE_TYPE = "memory";
+
+type MemoryInjectTrigger = "session_start" | "session_compact";
 
 export default function memoryExtension(pi: ExtensionAPI) {
 	let memoryPath = "";
@@ -20,9 +23,31 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			: undefined;
 	}
 
+	function buildMemoryMessage(trigger: MemoryInjectTrigger) {
+		if (!memoryContent) return undefined;
+		return {
+			customType: MEMORY_MESSAGE_TYPE,
+			content: `The following persistent agent memory was loaded from \`${memoryPath}\`:
+
+${memoryContent}`,
+			display: false,
+			details: {
+				trigger,
+				path: memoryPath,
+			},
+		};
+	}
+
+	function injectMemoryLeaf(trigger: MemoryInjectTrigger) {
+		const message = buildMemoryMessage(trigger);
+		if (!message) return;
+		pi.sendMessage(message, { triggerTurn: false });
+	}
+
 	pi.on("session_start", async () => {
 		if (isSubagentProcess()) return;
 		loadMemory();
+		injectMemoryLeaf("session_start");
 	});
 
 	pi.on("resources_discover", async () => {
@@ -30,19 +55,9 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		loadMemory();
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("session_compact", async () => {
 		if (isSubagentProcess()) return;
-		if (!memoryContent) return;
-
-		return {
-			systemPrompt: `${event.systemPrompt}
-
-## Parker's Memory
-
-The following persistent Parker memory was loaded from \`${memoryPath}\`:
-
-${memoryContent}
-`,
-		};
+		loadMemory();
+		injectMemoryLeaf("session_compact");
 	});
 }
