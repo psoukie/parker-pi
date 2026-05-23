@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const USER_DATA_DIR = process.env.USER_DATA || path.join(os.homedir(), "user_data");
 
@@ -65,10 +65,18 @@ function ensureDailyBackup(dataDir: string): { created: boolean; backupPath?: st
 export default function dataBackupExtension(pi: ExtensionAPI) {
 	let shouldClearOnFirstPrompt = false;
 
-	pi.on("session_start", async (_event, ctx) => {
+	function clearStartupBackupWidget(ctx: ExtensionContext) {
+		if (!ctx.hasUI || !shouldClearOnFirstPrompt) return;
+		ctx.ui.setWidget("data-backup", undefined);
+		shouldClearOnFirstPrompt = false;
+	}
+
+	pi.on("session_start", async (event, ctx) => {
 		if (process.env.PI_SUBAGENT === "1") return;
 
 		shouldClearOnFirstPrompt = false;
+		if (event.reason !== "startup") return;
+
 		const result = ensureDailyBackup(USER_DATA_DIR);
 		if (!ctx.hasUI) return;
 
@@ -100,8 +108,11 @@ export default function dataBackupExtension(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (process.env.PI_SUBAGENT === "1") return;
-		if (!ctx.hasUI || !shouldClearOnFirstPrompt) return;
-		ctx.ui.setWidget("data-backup", undefined);
-		shouldClearOnFirstPrompt = false;
+		clearStartupBackupWidget(ctx);
+	});
+
+	pi.on("user_bash", async (_event, ctx) => {
+		if (process.env.PI_SUBAGENT === "1") return;
+		clearStartupBackupWidget(ctx);
 	});
 }
