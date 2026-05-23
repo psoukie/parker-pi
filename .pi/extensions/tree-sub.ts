@@ -37,12 +37,10 @@ interface TreeSubState {
 
 interface TreeSubEntryData {
 	version: 1;
-	event: "start" | "return" | "cancel";
+	event: "start";
 	originId: string;
-	startEntryId?: string;
 	agentName?: string;
 	contextMode?: BranchContextMode;
-	forget?: boolean;
 	timestamp: string;
 }
 
@@ -142,7 +140,7 @@ function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
 }
 
-function isBranchStateEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: TreeSubEntryData } {
+function isBranchStateEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: unknown } {
 	return entry.type === "custom" && entry.customType === CUSTOM_TYPE;
 }
 
@@ -150,17 +148,15 @@ function parseBranchStateEntryData(data: unknown): TreeSubEntryData | undefined 
 	if (!data || typeof data !== "object") return undefined;
 	const value = data as Partial<TreeSubEntryData>;
 	if (value.version !== 1) return undefined;
-	if (value.event !== "start" && value.event !== "return" && value.event !== "cancel") return undefined;
+	if (value.event !== "start") return undefined;
 	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
 	const contextMode = value.contextMode === "full" || value.contextMode === "compacted" || value.contextMode === "none" ? value.contextMode : undefined;
 	return {
 		version: 1,
-		event: value.event,
+		event: "start",
 		originId: value.originId.trim(),
-		startEntryId: typeof value.startEntryId === "string" && value.startEntryId.trim() ? value.startEntryId.trim() : undefined,
 		agentName: typeof value.agentName === "string" && value.agentName.trim() ? value.agentName.trim() : undefined,
 		contextMode,
-		forget: typeof value.forget === "boolean" ? value.forget : undefined,
 		timestamp: typeof value.timestamp === "string" && value.timestamp.trim() ? value.timestamp.trim() : "",
 	};
 }
@@ -173,19 +169,12 @@ function readBranchState(ctx: ExtensionContext): TreeSubState | undefined {
 		const data = parseBranchStateEntryData(entry.data);
 		if (!data) continue;
 
-		if (data.event === "start") {
-			active = {
-				originId: data.originId,
-				startEntryId: entry.id,
-				agentName: data.agentName,
-				contextMode: data.contextMode,
-			};
-			continue;
-		}
-
-		const matchesActiveStart = !data.startEntryId || data.startEntryId === active?.startEntryId;
-		const matchesActiveOrigin = data.originId === active?.originId;
-		if (active && matchesActiveOrigin && matchesActiveStart) active = undefined;
+		active = {
+			originId: data.originId,
+			startEntryId: entry.id,
+			agentName: data.agentName,
+			contextMode: data.contextMode,
+		};
 	}
 
 	return active;
@@ -204,19 +193,6 @@ function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originI
 	const startEntryId = ctx.sessionManager.getLeafId();
 	if (!startEntryId) throw new Error("Failed to append tree-sub start state.");
 	return { originId, startEntryId, agentName, contextMode };
-}
-
-function appendBranchReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolean) {
-	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
-		version: 1,
-		event: "return",
-		originId: state.originId,
-		startEntryId: state.startEntryId,
-		agentName: state.agentName,
-		contextMode: state.contextMode,
-		forget,
-		timestamp: new Date().toISOString(),
-	});
 }
 
 function setBranchWidget(ctx: ExtensionContext, state: TreeSubState | undefined) {
@@ -511,7 +487,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
 }
 
-async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, forget: boolean) {
+async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean) {
 	const state = readBranchState(ctx);
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
@@ -527,8 +503,6 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 	await ctx.waitForIdle();
 	notify(ctx, forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`, "info");
 
-	appendBranchReturnState(pi, state, forget);
-
 	const result = await ctx.navigateTree(
 		state.originId,
 		forget
@@ -540,13 +514,8 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 				},
 	);
 
-	if (result.cancelled) {
-		notify(ctx, "/branch return cancelled; return marker was recorded but tree navigation was cancelled.", "warning");
-		return;
-	}
-
-	setBranchWidget(ctx, undefined);
-	notify(ctx, "Returned from branch.", "info");
+	setBranchWidget(ctx, readBranchState(ctx));
+	notify(ctx, result.cancelled ? "/branch return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
 }
 
 async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -562,16 +531,21 @@ async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	if (!choice) return;
 
 	if (choice === "Return with summary") {
-		await returnFromBranch(pi, ctx, false);
+		await returnFromBranch(ctx, false);
 		return;
 	}
 	if (choice === "Return without summary") {
-		await returnFromBranch(pi, ctx, true);
+		await returnFromBranch(ctx, true);
 	}
 }
 
 export default function treeSubExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
+		if (isSubagentProcess()) return;
+		setBranchWidget(ctx, readBranchState(ctx));
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
 		setBranchWidget(ctx, readBranchState(ctx));
 	});
