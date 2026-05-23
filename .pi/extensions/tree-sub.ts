@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, parseFrontmatter, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, getAgentDir, parseFrontmatter, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const CUSTOM_TYPE = "tree-sub";
@@ -247,27 +248,102 @@ function buildAgentSystemPrompt(agent: AgentConfig) {
 	].join("\n");
 }
 
-async function selectAgentProfile(ctx: ExtensionCommandContext): Promise<string | undefined | null> {
-	const discovery = discoverAgents(ctx.cwd, "project");
-	if (discovery.agents.length === 0) {
-		notify(ctx, "No agent profiles found; starting without an agent.", "info");
-		return undefined;
-	}
-	const choices = ["(none)", ...discovery.agents.map((agent) => `${agent.name} (${agent.source}) — ${agent.description}`)];
-	const choice = await ctx.ui.select("Use which agent profile for this branch?", choices);
-	if (!choice) return null;
-	if (choice === "(none)") return undefined;
-	return choice.split(" ", 1)[0];
+interface BranchStartSelection {
+	agentName?: string;
+	contextMode: BranchContextMode;
 }
 
-async function selectContextMode(ctx: ExtensionCommandContext): Promise<BranchContextMode | null> {
-	const full = "Full context";
-	const compacted = "Compacted context";
-	const none = "No prior context";
-	const choice = await ctx.ui.select("Start branch with which context?", [full, compacted, none]);
-	if (!choice) return null;
-	if (choice === compacted) return "compacted";
-	return choice === none ? "none" : "full";
+function getContextModeLabel(contextMode: BranchContextMode) {
+	if (contextMode === "compacted") return "Compacted context";
+	if (contextMode === "none") return "No prior context";
+	return "Full context";
+}
+
+function getNextContextMode(contextMode: BranchContextMode, direction = 1): BranchContextMode {
+	const modes: BranchContextMode[] = ["full", "compacted", "none"];
+	const index = modes.indexOf(contextMode);
+	return modes[(index + direction + modes.length) % modes.length];
+}
+
+async function selectBranchStartOptions(ctx: ExtensionCommandContext): Promise<BranchStartSelection | null> {
+	const discovery = discoverAgents(ctx.cwd, "project");
+	let contextMode: BranchContextMode = "full";
+	const noneValue = "__none__";
+	const items: SelectItem[] = [
+		{ value: noneValue, label: "No agent profile", description: "Use Parker's normal instructions" },
+		...discovery.agents.map((agent) => ({
+			value: agent.name,
+			label: agent.name,
+			description: agent.description,
+		})),
+	];
+
+	return await ctx.ui.custom<BranchStartSelection | null>((tui, theme, keybindings, done) => {
+		const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+		const selectList = new SelectList(items, Math.min(items.length, 10), {
+			selectedPrefix: (text: string) => theme.fg("accent", text),
+			selectedText: (text: string) => theme.fg("accent", text),
+			description: (text: string) => theme.fg("muted", text),
+			scrollInfo: (text: string) => theme.fg("dim", text),
+			noMatch: (text: string) => theme.fg("warning", text),
+		});
+
+		selectList.onSelect = (item: SelectItem) => {
+			done({
+				agentName: item.value === noneValue ? undefined : String(item.value),
+				contextMode,
+			});
+		};
+		selectList.onCancel = () => done(null);
+
+		return {
+			render: (width: number) => [
+				...border.render(width),
+				theme.fg("accent", theme.bold("Start Branch")),
+				`Context: ${theme.fg("accent", getContextModeLabel(contextMode))}`,
+				"",
+				...selectList.render(width),
+				"",
+				theme.fg("dim", "↑↓ select agent · Enter start · Esc cancel"),
+				theme.fg("dim", "Tab/←/→ context · 1 full · 2 compacted · 3 none"),
+				...border.render(width),
+			],
+			invalidate: () => selectList.invalidate(),
+			handleInput: (data: string) => {
+				if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+					contextMode = getNextContextMode(contextMode);
+					tui.requestRender();
+					return;
+				}
+				if (matchesKey(data, Key.left)) {
+					contextMode = getNextContextMode(contextMode, -1);
+					tui.requestRender();
+					return;
+				}
+				if (data === "1") {
+					contextMode = "full";
+					tui.requestRender();
+					return;
+				}
+				if (data === "2") {
+					contextMode = "compacted";
+					tui.requestRender();
+					return;
+				}
+				if (data === "3") {
+					contextMode = "none";
+					tui.requestRender();
+					return;
+				}
+				if (keybindings.matches(data, "tui.select.cancel")) {
+					done(null);
+					return;
+				}
+				selectList.handleInput(data);
+				tui.requestRender();
+			},
+		};
+	}, { overlay: true });
 }
 
 function resolveAgent(ctx: ExtensionContext, agentName: string | undefined, agentScope: AgentScope): { agent?: AgentConfig; error?: string } {
@@ -345,13 +421,10 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
-	const contextMode = await selectContextMode(ctx);
-	if (contextMode === null) return;
+	const selection = await selectBranchStartOptions(ctx);
+	if (!selection) return;
 
-	const selectedAgent = await selectAgentProfile(ctx);
-	if (selectedAgent === null) return;
-
-	const promptTitle = selectedAgent ? `Branch task for ${selectedAgent}` : "Branch task";
+	const promptTitle = selection.agentName ? `Branch task for ${selection.agentName}` : "Branch task";
 	const enteredPrompt = await ctx.ui.input(promptTitle, "Describe the task for this visible branch...");
 	if (!enteredPrompt?.trim()) {
 		notify(ctx, "/branch cancelled: no prompt entered.", "info");
@@ -359,7 +432,8 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	}
 
 	const prompt = enteredPrompt.trim();
-	const result = startSubBranch(pi, ctx, prompt, { agentName: selectedAgent, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
+	const contextMode = selection.contextMode;
+	const result = startSubBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
@@ -441,16 +515,14 @@ async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const state = readSubState(ctx);
 	setSubWidget(ctx, state);
 
-	const choices = state
-		? ["Return with summary", "Return without summary"]
-		: ["New branch"];
-	const choice = await ctx.ui.select("Branch", choices);
-	if (!choice) return;
-
-	if (choice === "New branch") {
+	if (!state) {
 		await startBranchFromMenu(pi, ctx);
 		return;
 	}
+
+	const choice = await ctx.ui.select("Branch", ["Return with summary", "Return without summary"]);
+	if (!choice) return;
+
 	if (choice === "Return with summary") {
 		await returnFromBranch(pi, ctx, false);
 		return;
