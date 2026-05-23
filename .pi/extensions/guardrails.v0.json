@@ -1,9 +1,0 @@
-{
-  "pathAccess": {
-    "allowedPaths": [
-      "/dev/null",
-      "$USER_DATA/",
-      "~/user_data/"
-    ]
-  }
-}

@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+.pi/extensions/guardrails.json
+.pi/extensions/guardrails.v0.json
