@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DynamicBorder, getAgentDir, parseFrontmatter, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, SelectList, type SelectItem } from "@earendil-works/pi-tui";
+import { Editor, Key, matchesKey, SelectList, type EditorTheme, type SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const CUSTOM_TYPE = "tree-sub";
@@ -142,11 +142,11 @@ function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
 }
 
-function isTreeSubEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: TreeSubEntryData } {
+function isBranchStateEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: TreeSubEntryData } {
 	return entry.type === "custom" && entry.customType === CUSTOM_TYPE;
 }
 
-function parseTreeSubEntryData(data: unknown): TreeSubEntryData | undefined {
+function parseBranchStateEntryData(data: unknown): TreeSubEntryData | undefined {
 	if (!data || typeof data !== "object") return undefined;
 	const value = data as Partial<TreeSubEntryData>;
 	if (value.version !== 1) return undefined;
@@ -165,12 +165,12 @@ function parseTreeSubEntryData(data: unknown): TreeSubEntryData | undefined {
 	};
 }
 
-function readSubState(ctx: ExtensionContext): TreeSubState | undefined {
+function readBranchState(ctx: ExtensionContext): TreeSubState | undefined {
 	let active: TreeSubState | undefined;
 
 	for (const entry of ctx.sessionManager.getBranch()) {
-		if (!isTreeSubEntry(entry)) continue;
-		const data = parseTreeSubEntryData(entry.data);
+		if (!isBranchStateEntry(entry)) continue;
+		const data = parseBranchStateEntryData(entry.data);
 		if (!data) continue;
 
 		if (data.event === "start") {
@@ -191,7 +191,7 @@ function readSubState(ctx: ExtensionContext): TreeSubState | undefined {
 	return active;
 }
 
-function appendStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): TreeSubState {
+function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): TreeSubState {
 	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
 		version: 1,
 		event: "start",
@@ -206,7 +206,7 @@ function appendStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: str
 	return { originId, startEntryId, agentName, contextMode };
 }
 
-function appendReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolean) {
+function appendBranchReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolean) {
 	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
 		version: 1,
 		event: "return",
@@ -219,7 +219,7 @@ function appendReturnState(pi: ExtensionAPI, state: TreeSubState, forget: boolea
 	});
 }
 
-function setSubWidget(ctx: ExtensionContext, state: TreeSubState | undefined) {
+function setBranchWidget(ctx: ExtensionContext, state: TreeSubState | undefined) {
 	if (!ctx.hasUI) return;
 	if (!state) {
 		ctx.ui.setWidget(WIDGET_ID, undefined);
@@ -279,7 +279,7 @@ async function selectBranchStartOptions(ctx: ExtensionCommandContext): Promise<B
 	];
 
 	return await ctx.ui.custom<BranchStartSelection | null>((tui, theme, keybindings, done) => {
-		const border = new DynamicBorder((s: string) => theme.fg("accent", s));
+		const divider = new DynamicBorder((s: string) => theme.fg("border", s));
 		const selectList = new SelectList(items, Math.min(items.length, 10), {
 			selectedPrefix: (text: string) => theme.fg("accent", text),
 			selectedText: (text: string) => theme.fg("accent", text),
@@ -298,15 +298,15 @@ async function selectBranchStartOptions(ctx: ExtensionCommandContext): Promise<B
 
 		return {
 			render: (width: number) => [
-				...border.render(width),
-				theme.fg("accent", theme.bold("Start Branch")),
-				`Context: ${theme.fg("accent", getContextModeLabel(contextMode))}`,
-				"",
+				...divider.render(width),
+				theme.bold("Start branch"),
+				theme.fg("muted", `Context: ${getContextModeLabel(contextMode)}`),
+				...divider.render(width),
 				...selectList.render(width),
-				"",
-				theme.fg("dim", "↑↓ select agent · Enter start · Esc cancel"),
+				...divider.render(width),
+				theme.fg("dim", "↑↓ agent · Enter start · Esc cancel"),
 				theme.fg("dim", "Tab/←/→ context · 1 full · 2 compacted · 3 none"),
-				...border.render(width),
+				...divider.render(width),
 			],
 			invalidate: () => selectList.invalidate(),
 			handleInput: (data: string) => {
@@ -343,7 +343,7 @@ async function selectBranchStartOptions(ctx: ExtensionCommandContext): Promise<B
 				tui.requestRender();
 			},
 		};
-	}, { overlay: true });
+	});
 }
 
 function resolveAgent(ctx: ExtensionContext, agentName: string | undefined, agentScope: AgentScope): { agent?: AgentConfig; error?: string } {
@@ -360,7 +360,7 @@ function getStateAgent(ctx: ExtensionContext, state: TreeSubState): AgentConfig 
 	return discoverAgents(ctx.cwd, "project").agents.find((agent) => agent.name === state.agentName);
 }
 
-function startSubBranch(
+function startBranch(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	prompt: string,
@@ -368,7 +368,7 @@ function startSubBranch(
 ): { ok: true; originId: string; prompt: string; agentName?: string; state: TreeSubState; contextBaseEntryId: string } | { ok: false; error: string } {
 	if (isSubagentProcess()) return { ok: false, error: "tree-sub is disabled inside subprocess subagents." };
 
-	const existingState = readSubState(ctx);
+	const existingState = readBranchState(ctx);
 	if (existingState) {
 		return { ok: false, error: "Already inside a branch. Use /branch to return first; nested branches are intentionally disabled." };
 	}
@@ -382,18 +382,18 @@ function startSubBranch(
 	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
 	if (resolved.error) return { ok: false, error: resolved.error };
 
-	const state = appendStartState(pi, ctx, originId, resolved.agent?.name, options?.contextMode);
+	const state = appendBranchStartState(pi, ctx, originId, resolved.agent?.name, options?.contextMode);
 	pi.setLabel(originId, ORIGIN_LABEL);
 	const contextBaseEntryId = ctx.sessionManager.getLeafId();
 	if (!contextBaseEntryId) return { ok: false, error: "Failed to identify branch context base entry." };
-	setSubWidget(ctx, state);
+	setBranchWidget(ctx, state);
 	if (!options?.deferPrompt) {
 		pi.sendUserMessage(prompt, options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
 	}
 	return { ok: true, originId, prompt, agentName: resolved.agent?.name, state, contextBaseEntryId };
 }
 
-function defaultReturnInstructions(focus?: string) {
+function defaultBranchReturnInstructions(focus?: string) {
 	const base = [
 		"Summarize this temporary branch for returning to the main conversation.",
 		"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
@@ -415,6 +415,45 @@ const TreeSubStartParams = Type.Object({
 	),
 });
 
+async function inputBranchPrompt(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
+	return await ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => {
+		const divider = new DynamicBorder((s: string) => theme.fg("border", s));
+		const editorTheme: EditorTheme = {
+			borderColor: (s: string) => theme.fg("border", s),
+			selectList: {
+				selectedPrefix: (text: string) => theme.fg("accent", text),
+				selectedText: (text: string) => theme.fg("accent", text),
+				description: (text: string) => theme.fg("muted", text),
+				scrollInfo: (text: string) => theme.fg("dim", text),
+				noMatch: (text: string) => theme.fg("warning", text),
+			},
+		};
+		const editor = new Editor(tui, editorTheme);
+
+		editor.onSubmit = (value: string) => done(value.trim() || undefined);
+
+		return {
+			render: (width: number) => [
+				...divider.render(width),
+				theme.bold(title),
+				theme.fg("muted", "Describe the task for this branch."),
+				...editor.render(width),
+				theme.fg("dim", "Enter submit · Shift+Enter newline · \\+Enter newline · Esc cancel"),
+				...divider.render(width),
+			],
+			invalidate: () => editor.invalidate(),
+			handleInput: (data: string) => {
+				if (matchesKey(data, Key.escape) || keybindings.matches(data, "tui.select.cancel")) {
+					done(undefined);
+					return;
+				}
+				editor.handleInput(data);
+				tui.requestRender();
+			},
+		};
+	});
+}
+
 async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	if (!ctx.isIdle()) {
 		notify(ctx, "Agent is busy. Run /branch once the agent is idle.", "warning");
@@ -425,15 +464,14 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	if (!selection) return;
 
 	const promptTitle = selection.agentName ? `Branch task for ${selection.agentName}` : "Branch task";
-	const enteredPrompt = await ctx.ui.input(promptTitle, "Describe the task for this visible branch...");
-	if (!enteredPrompt?.trim()) {
+	const prompt = await inputBranchPrompt(ctx, promptTitle);
+	if (!prompt) {
 		notify(ctx, "/branch cancelled: no prompt entered.", "info");
 		return;
 	}
 
-	const prompt = enteredPrompt.trim();
 	const contextMode = selection.contextMode;
-	const result = startSubBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
+	const result = startBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
@@ -474,14 +512,14 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 }
 
 async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, forget: boolean) {
-	const state = readSubState(ctx);
+	const state = readBranchState(ctx);
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
 		return;
 	}
 
 	if (!ctx.sessionManager.getEntry(state.originId)) {
-		setSubWidget(ctx, undefined);
+		setBranchWidget(ctx, undefined);
 		notify(ctx, `Stored branch origin ${state.originId} no longer exists.`, "error");
 		return;
 	}
@@ -489,7 +527,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 	await ctx.waitForIdle();
 	notify(ctx, forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`, "info");
 
-	appendReturnState(pi, state, forget);
+	appendBranchReturnState(pi, state, forget);
 
 	const result = await ctx.navigateTree(
 		state.originId,
@@ -497,7 +535,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 			? undefined
 			: {
 					summarize: true,
-					customInstructions: defaultReturnInstructions(),
+					customInstructions: defaultBranchReturnInstructions(),
 					label: RETURN_LABEL,
 				},
 	);
@@ -507,13 +545,13 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 		return;
 	}
 
-	setSubWidget(ctx, undefined);
+	setBranchWidget(ctx, undefined);
 	notify(ctx, "Returned from branch.", "info");
 }
 
 async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
-	const state = readSubState(ctx);
-	setSubWidget(ctx, state);
+	const state = readBranchState(ctx);
+	setBranchWidget(ctx, state);
 
 	if (!state) {
 		await startBranchFromMenu(pi, ctx);
@@ -535,7 +573,7 @@ async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 export default function treeSubExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
-		setSubWidget(ctx, readSubState(ctx));
+		setBranchWidget(ctx, readBranchState(ctx));
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -565,7 +603,7 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (isSubagentProcess()) return;
-		const state = readSubState(ctx);
+		const state = readBranchState(ctx);
 		if (!state?.agentName) return;
 
 		const agent = getStateAgent(ctx, state);
@@ -585,7 +623,7 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 			"This queues the branch task; the user must later run /branch to summarize the branch and return to the origin.",
 			"Optionally provide a project-local agent profile name from .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
 		].join(" "),
-		promptSnippet: "tree_sub_start: start a visible branch task; user later runs /branch to summarize and return.",
+		promptSnippet: "tree_sub_start: start a branch task; user later runs /branch to summarize and return.",
 		promptGuidelines: [
 			"Prefer tree_sub_start over subprocess subagent delegation when the work should remain visible and inspectable in /tree and true parallelism is not needed.",
 			"Do not use tree_sub_start if already inside an active branch; nested tree-sub work is intentionally disabled.",
@@ -598,7 +636,7 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: "Missing prompt." }], isError: true };
 			}
 
-			const result = startSubBranch(pi, ctx, prompt, {
+			const result = startBranch(pi, ctx, prompt, {
 				agentName: params.agent,
 				agentScope: "project",
 				deliverAs: ctx.isIdle() ? undefined : "followUp",
@@ -612,7 +650,7 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Started visible branch from ${result.originId}${agentText}. The branch task has been queued; run /branch when ready to summarize and return.`,
+						text: `Started branch from ${result.originId}${agentText}. The branch task has been queued; run /branch when ready to summarize and return.`,
 					},
 				],
 			};
@@ -620,7 +658,7 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("branch", {
-		description: "Open the visible branch menu",
+		description: "Open the branch menu",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 			if (args.trim()) {
