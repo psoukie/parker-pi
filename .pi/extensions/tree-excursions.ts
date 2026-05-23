@@ -12,6 +12,7 @@ const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conve
 
 type AgentScope = "user" | "project" | "both";
 type BranchContextMode = "full" | "compacted" | "none";
+type BranchReturnContext = ExtensionContext & Partial<Pick<ExtensionCommandContext, "navigateTree" | "waitForIdle">>;
 
 interface AgentConfig {
 	name: string;
@@ -488,7 +489,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
 }
 
-async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean, focus?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
+async function returnFromBranch(ctx: BranchReturnContext, forget: boolean, focus?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
 	const state = readBranchState(ctx);
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
@@ -502,7 +503,13 @@ async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean, f
 		return { ok: false, error };
 	}
 
-	await ctx.waitForIdle();
+	if (typeof ctx.navigateTree !== "function") {
+		const error = "Branch return requires a context with navigateTree().";
+		notify(ctx, error, "error");
+		return { ok: false, error };
+	}
+
+	if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
 	notify(ctx, forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`, "info");
 
 	const result = await ctx.navigateTree(
