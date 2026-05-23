@@ -4,8 +4,8 @@ import { DynamicBorder, getAgentDir, parseFrontmatter, type ExtensionAPI, type E
 import { Editor, Key, matchesKey, SelectList, type EditorTheme, type SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-const CUSTOM_TYPE = "tree-sub";
-const WIDGET_ID = "tree-sub";
+const CUSTOM_TYPE = "branch";
+const WIDGET_ID = "branch";
 const ORIGIN_LABEL = "branch-origin";
 const RETURN_LABEL = "branch-return";
 const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conversation history. The next user message defines the branch task.";
@@ -28,14 +28,14 @@ interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
-interface TreeSubState {
+interface BranchState {
 	originId: string;
 	startEntryId: string;
 	agentName?: string;
 	contextMode?: BranchContextMode;
 }
 
-interface TreeSubEntryData {
+interface BranchEntryData {
 	version: 1;
 	event: "start";
 	originId: string;
@@ -144,9 +144,9 @@ function isBranchStateEntry(entry: SessionEntry): entry is SessionEntry & { type
 	return entry.type === "custom" && entry.customType === CUSTOM_TYPE;
 }
 
-function parseBranchStateEntryData(data: unknown): TreeSubEntryData | undefined {
+function parseBranchStateEntryData(data: unknown): BranchEntryData | undefined {
 	if (!data || typeof data !== "object") return undefined;
-	const value = data as Partial<TreeSubEntryData>;
+	const value = data as Partial<BranchEntryData>;
 	if (value.version !== 1) return undefined;
 	if (value.event !== "start") return undefined;
 	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
@@ -161,8 +161,8 @@ function parseBranchStateEntryData(data: unknown): TreeSubEntryData | undefined 
 	};
 }
 
-function readBranchState(ctx: ExtensionContext): TreeSubState | undefined {
-	let active: TreeSubState | undefined;
+function readBranchState(ctx: ExtensionContext): BranchState | undefined {
+	let active: BranchState | undefined;
 
 	for (const entry of ctx.sessionManager.getBranch()) {
 		if (!isBranchStateEntry(entry)) continue;
@@ -180,8 +180,8 @@ function readBranchState(ctx: ExtensionContext): TreeSubState | undefined {
 	return active;
 }
 
-function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): TreeSubState {
-	pi.appendEntry<TreeSubEntryData>(CUSTOM_TYPE, {
+function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): BranchState {
+	pi.appendEntry<BranchEntryData>(CUSTOM_TYPE, {
 		version: 1,
 		event: "start",
 		originId,
@@ -191,11 +191,11 @@ function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originI
 	});
 
 	const startEntryId = ctx.sessionManager.getLeafId();
-	if (!startEntryId) throw new Error("Failed to append tree-sub start state.");
+	if (!startEntryId) throw new Error("Failed to append branch start state.");
 	return { originId, startEntryId, agentName, contextMode };
 }
 
-function setBranchWidget(ctx: ExtensionContext, state: TreeSubState | undefined) {
+function setBranchWidget(ctx: ExtensionContext, state: BranchState | undefined) {
 	if (!ctx.hasUI) return;
 	if (!state) {
 		ctx.ui.setWidget(WIDGET_ID, undefined);
@@ -331,7 +331,7 @@ function resolveAgent(ctx: ExtensionContext, agentName: string | undefined, agen
 	return { error: `Unknown agent: ${agentName}. Available agents: ${available}.` };
 }
 
-function getStateAgent(ctx: ExtensionContext, state: TreeSubState): AgentConfig | undefined {
+function getStateAgent(ctx: ExtensionContext, state: BranchState): AgentConfig | undefined {
 	if (!state.agentName) return undefined;
 	return discoverAgents(ctx.cwd, "project").agents.find((agent) => agent.name === state.agentName);
 }
@@ -341,8 +341,8 @@ function startBranch(
 	ctx: ExtensionContext,
 	prompt: string,
 	options?: { agentName?: string; agentScope?: AgentScope; deliverAs?: "followUp" | "steer"; contextMode?: BranchContextMode; deferPrompt?: boolean },
-): { ok: true; originId: string; prompt: string; agentName?: string; state: TreeSubState; contextBaseEntryId: string } | { ok: false; error: string } {
-	if (isSubagentProcess()) return { ok: false, error: "tree-sub is disabled inside subprocess subagents." };
+): { ok: true; originId: string; prompt: string; agentName?: string; state: BranchState; contextBaseEntryId: string } | { ok: false; error: string } {
+	if (isSubagentProcess()) return { ok: false, error: "tree-excursions is disabled inside subprocess subagents." };
 
 	const existingState = readBranchState(ctx);
 	if (existingState) {
@@ -381,7 +381,7 @@ function defaultBranchReturnInstructions(focus?: string) {
 	return base.join("\n");
 }
 
-const TreeSubStartParams = Type.Object({
+const ExcursionStartParams = Type.Object({
 	prompt: Type.String({ description: "Task prompt to run on a visible temporary session-tree branch." }),
 	agent: Type.Optional(
 		Type.String({
@@ -389,6 +389,11 @@ const TreeSubStartParams = Type.Object({
 				"Optional project-local agent profile name from .pi/agents, e.g. william or worker. The profile description and instructions are injected into the branch system prompt; no subprocess is spawned.",
 		}),
 	),
+});
+
+const ExcursionReturnParams = Type.Object({
+	summarize: Type.Optional(Type.Boolean({ description: "Whether to summarize the branch while returning. Defaults to true." })),
+	focus: Type.Optional(Type.String({ description: "Optional extra guidance for the return summary." })),
 });
 
 async function inputBranchPrompt(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
@@ -487,17 +492,18 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
 }
 
-async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean) {
+async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean, focus?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
 	const state = readBranchState(ctx);
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
-		return;
+		return { ok: false, error: "No active branch found." };
 	}
 
 	if (!ctx.sessionManager.getEntry(state.originId)) {
 		setBranchWidget(ctx, undefined);
-		notify(ctx, `Stored branch origin ${state.originId} no longer exists.`, "error");
-		return;
+		const error = `Stored branch origin ${state.originId} no longer exists.`;
+		notify(ctx, error, "error");
+		return { ok: false, error };
 	}
 
 	await ctx.waitForIdle();
@@ -509,13 +515,14 @@ async function returnFromBranch(ctx: ExtensionCommandContext, forget: boolean) {
 			? undefined
 			: {
 					summarize: true,
-					customInstructions: defaultBranchReturnInstructions(),
+					customInstructions: defaultBranchReturnInstructions(focus),
 					label: RETURN_LABEL,
 				},
 	);
 
 	setBranchWidget(ctx, readBranchState(ctx));
 	notify(ctx, result.cancelled ? "/branch return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
+	return { ok: true, cancelled: result.cancelled };
 }
 
 async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -539,7 +546,7 @@ async function showBranchMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	}
 }
 
-export default function treeSubExtension(pi: ExtensionAPI) {
+export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
 		setBranchWidget(ctx, readBranchState(ctx));
@@ -589,21 +596,21 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "tree_sub_start",
-		label: "Tree Sub Start",
+		name: "excursion_start",
+		label: "Excursion Start",
 		description: [
 			"Start a visible temporary branch task in the current Pi session tree.",
 			"Use when a subagent-style investigation is helpful but true parallel subprocess isolation is not required.",
 			"This queues the branch task; the user must later run /branch to summarize the branch and return to the origin.",
 			"Optionally provide a project-local agent profile name from .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
 		].join(" "),
-		promptSnippet: "tree_sub_start: start a branch task; user later runs /branch to summarize and return.",
+		promptSnippet: "excursion_start: start a branch task; user later runs /branch to summarize and return.",
 		promptGuidelines: [
-			"Prefer tree_sub_start over subprocess subagent delegation when the work should remain visible and inspectable in /tree and true parallelism is not needed.",
-			"Do not use tree_sub_start if already inside an active branch; nested tree-sub work is intentionally disabled.",
-			"After starting a tree-sub branch, tell the user they can inspect it with /tree and should run /branch when they want to summarize and come back.",
+			"Prefer excursion_start over subprocess subagent delegation when the work should remain visible and inspectable in /tree and true parallelism is not needed.",
+			"Do not use excursion_start if already inside an active branch; nested branch work is intentionally disabled.",
+			"After starting an excursion branch, tell the user they can inspect it with /tree and should run /branch when they want to summarize and come back.",
 		],
-		parameters: TreeSubStartParams,
+		parameters: ExcursionStartParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const prompt = params.prompt.trim();
 			if (!prompt) {
@@ -625,6 +632,41 @@ export default function treeSubExtension(pi: ExtensionAPI) {
 					{
 						type: "text",
 						text: `Started branch from ${result.originId}${agentText}. The branch task has been queued; run /branch when ready to summarize and return.`,
+					},
+				],
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "excursion_return",
+		label: "Excursion Return",
+		description: "Return from the active visible branch to its stored origin, optionally summarizing the branch first.",
+		promptSnippet: "excursion_return: return from the active branch to its stored origin.",
+		promptGuidelines: [
+			"Use excursion_return when a visible branch task is complete and returning to the origin would help the user continue.",
+			"Only use excursion_return when already inside an active branch.",
+			"Set summarize to false to return without a summary; otherwise Pi will create a branch-return summary breadcrumb.",
+		],
+		parameters: ExcursionReturnParams,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const state = readBranchState(ctx);
+			if (!state) {
+				return { content: [{ type: "text", text: "No active branch found." }], isError: true };
+			}
+			const result = await returnFromBranch(ctx, params.summarize === false, params.focus);
+			if (!result.ok) {
+				return { content: [{ type: "text", text: result.error }], isError: true };
+			}
+			return {
+				content: [
+					{
+						type: "text",
+						text: result.cancelled
+							? "Branch return was cancelled."
+							: params.summarize === false
+								? "Returned from branch without summary."
+								: "Returned from branch with summary.",
 					},
 				],
 			};
