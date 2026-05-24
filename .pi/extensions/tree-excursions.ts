@@ -4,14 +4,14 @@ import { BorderedLoader, DynamicBorder, getAgentDir, parseFrontmatter, type Exte
 import { Editor, Key, matchesKey, SelectList, type EditorTheme, type SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-const CUSTOM_TYPE = "branch";
-const ANCHOR_TYPE = "branch-anchor";
+const EXCURSION_HEAD_TYPE = "excursion-head";
+const EXCURSION_START_TYPE = "excursion-start";
+const EXCURSION_END_TYPE = "excursion-end";
 const WIDGET_ID = "branch";
-const ORIGIN_LABEL = "branch-origin";
 const RETURN_LABEL = "branch-return";
 const RETURN_TOOL_NAME = "excursion_return";
-const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conversation history. The next user message defines the branch task.";
-const BRANCH_PROMPT_PREFIX = "[START OF BRANCH EXCURSION]";
+const NO_CONTEXT_SUMMARY = "This excursion branch intentionally starts with no prior conversation history. The next user message defines the excursion task.";
+const EXCURSION_START_MESSAGE = "This is the start of an excursion branch.";
 
 type AgentScope = "user" | "project" | "both";
 type BranchContextMode = "full" | "compacted" | "none";
@@ -33,18 +33,21 @@ interface AgentDiscoveryResult {
 }
 
 interface BranchState {
-	originId: string;
+	headEntryId: string;
 	startEntryId: string;
 	agentName?: string;
-	contextMode?: BranchContextMode;
+	mode: BranchContextMode;
 }
 
-interface BranchEntryData {
+interface ExcursionHeadData {
 	version: 1;
-	event: "start";
-	originId: string;
+	timestamp: string;
+}
+
+interface ExcursionStartDetails {
+	version: 1;
 	agentName?: string;
-	contextMode?: BranchContextMode;
+	mode: BranchContextMode;
 	timestamp: string;
 }
 
@@ -152,84 +155,107 @@ function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
 }
 
-function isBranchStateEntry(entry: SessionEntry): entry is SessionEntry & { type: "custom"; customType: typeof CUSTOM_TYPE; data?: unknown } {
-	return entry.type === "custom" && entry.customType === CUSTOM_TYPE;
+function isCustomType(entry: SessionEntry | undefined, customType: string): entry is SessionEntry & { customType: string; data?: unknown; details?: unknown } {
+	return (entry?.type === "custom" || entry?.type === "custom_message") && entry.customType === customType;
 }
 
-function parseBranchStateEntryData(data: unknown): BranchEntryData | undefined {
-	if (!data || typeof data !== "object") return undefined;
-	const value = data as Partial<BranchEntryData>;
+function isExcursionEntry(entry: SessionEntry | undefined): entry is SessionEntry & { customType: string; data?: unknown; details?: unknown } {
+	return (entry?.type === "custom" || entry?.type === "custom_message") && (entry.customType === EXCURSION_HEAD_TYPE || entry.customType === EXCURSION_START_TYPE || entry.customType === EXCURSION_END_TYPE);
+}
+
+function parseExcursionStartDetails(details: unknown): ExcursionStartDetails | undefined {
+	if (!details || typeof details !== "object") return undefined;
+	const value = details as Partial<ExcursionStartDetails>;
 	if (value.version !== 1) return undefined;
-	if (value.event !== "start") return undefined;
-	if (typeof value.originId !== "string" || !value.originId.trim()) return undefined;
-	const contextMode = value.contextMode === "full" || value.contextMode === "compacted" || value.contextMode === "none" ? value.contextMode : undefined;
+	const mode = value.mode === "full" || value.mode === "compacted" || value.mode === "none" ? value.mode : undefined;
+	if (!mode) return undefined;
 	return {
 		version: 1,
-		event: "start",
-		originId: value.originId.trim(),
 		agentName: typeof value.agentName === "string" && value.agentName.trim() ? value.agentName.trim() : undefined,
-		contextMode,
+		mode,
 		timestamp: typeof value.timestamp === "string" && value.timestamp.trim() ? value.timestamp.trim() : "",
 	};
 }
 
 function readBranchState(ctx: ExtensionContext): BranchState | undefined {
 	const branch = ctx.sessionManager.getBranch();
+	let nearestExcursionIndex = -1;
 
 	for (let i = branch.length - 1; i >= 0; i--) {
-		const entry = branch[i];
-		if (!entry || !isBranchStateEntry(entry)) continue;
-		const data = parseBranchStateEntryData(entry.data);
-		if (!data) continue;
+		if (isExcursionEntry(branch[i])) {
+			nearestExcursionIndex = i;
+			break;
+		}
+	}
 
-		return {
-			originId: data.originId,
-			startEntryId: entry.id,
-			agentName: data.agentName,
-			contextMode: data.contextMode,
-		};
+	if (nearestExcursionIndex < 0) return undefined;
+	const nearest = branch[nearestExcursionIndex];
+	if (!isCustomType(nearest, EXCURSION_START_TYPE)) return undefined;
+
+	const data = parseExcursionStartDetails(nearest.details ?? nearest.data);
+	if (!data) return undefined;
+
+	for (let i = nearestExcursionIndex - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (isCustomType(entry, EXCURSION_HEAD_TYPE)) {
+			return {
+				headEntryId: entry.id,
+				startEntryId: nearest.id,
+				agentName: data.agentName,
+				mode: data.mode,
+			};
+		}
 	}
 
 	return undefined;
 }
 
-function appendBranchAnchorIfNeeded(pi: ExtensionAPI, ctx: ExtensionContext, originId: string): string {
-	const leaf = ctx.sessionManager.getLeafEntry();
-	if (!leaf) throw new Error("Cannot inspect current branch origin leaf.");
-	if (leaf.id !== originId) throw new Error("Current leaf changed before branch start state could be recorded.");
-	if (leaf.type === "assistant") return originId;
-	if ((leaf.type === "custom_message" || leaf.type === "custom") && leaf.customType === ANCHOR_TYPE) return originId;
+function startExcursion(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	options?: { agentName?: string; agentScope?: AgentScope; mode?: BranchContextMode },
+): { ok: true; headEntryId: string; startEntryId: string; agentName?: string; state: BranchState; contextBaseEntryId: string } | { ok: false; error: string } {
+	if (isSubagentProcess()) return { ok: false, error: "tree-excursions is disabled inside subprocess subagents." };
 
+	const currentLeaf = ctx.sessionManager.getLeafEntry();
+	if (!currentLeaf) {
+		return { ok: false, error: "Cannot start an excursion branch before the session has a tree entry." };
+	}
+
+	const agentScope = options?.agentScope ?? "both";
+	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
+	if (resolved.error) return { ok: false, error: resolved.error };
+
+	let headEntryId = currentLeaf.id;
+	if (!isCustomType(currentLeaf, EXCURSION_HEAD_TYPE)) {
+		pi.appendEntry<ExcursionHeadData>(EXCURSION_HEAD_TYPE, {
+			version: 1,
+			timestamp: new Date().toISOString(),
+		});
+		const appendedHeadId = ctx.sessionManager.getLeafId();
+		if (!appendedHeadId) return { ok: false, error: "Failed to append excursion head." };
+		headEntryId = appendedHeadId;
+	}
+
+	const mode = options?.mode ?? "full";
 	pi.sendMessage({
-		customType: ANCHOR_TYPE,
-		content: "",
+		customType: EXCURSION_START_TYPE,
+		content: EXCURSION_START_MESSAGE,
 		display: true,
 		details: {
 			version: 1,
+			agentName: resolved.agent?.name,
+			mode,
 			timestamp: new Date().toISOString(),
-			anchoredFromId: originId,
-			anchoredFromType: leaf.type,
-		},
-	});
-
-	const anchorId = ctx.sessionManager.getLeafId();
-	if (!anchorId) throw new Error("Failed to append branch anchor.");
-	return anchorId;
-}
-
-function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): BranchState {
-	pi.appendEntry<BranchEntryData>(CUSTOM_TYPE, {
-		version: 1,
-		event: "start",
-		originId,
-		agentName,
-		contextMode,
-		timestamp: new Date().toISOString(),
+		} satisfies ExcursionStartDetails,
 	});
 
 	const startEntryId = ctx.sessionManager.getLeafId();
-	if (!startEntryId) throw new Error("Failed to append branch start state.");
-	return { originId, startEntryId, agentName, contextMode };
+	if (!startEntryId) return { ok: false, error: "Failed to append excursion start." };
+	const state = { headEntryId, startEntryId, agentName: resolved.agent?.name, mode };
+	const contextBaseEntryId = startEntryId;
+	refreshBranchState(pi, ctx);
+	return { ok: true, headEntryId, startEntryId, agentName: resolved.agent?.name, state, contextBaseEntryId };
 }
 
 function setBranchWidget(ctx: ExtensionContext, state: BranchState | undefined) {
@@ -384,20 +410,16 @@ function parseBranchReturnArgs(args: string): { mode: "summary" | "without_summa
 	};
 }
 
-function formatBranchPrompt(prompt: string) {
-	return `${BRANCH_PROMPT_PREFIX}\n\n${prompt}`;
-}
-
 function buildAgentSystemPrompt(agent: AgentConfig) {
 	return [
 		"",
-		"## Visible Branch Agent Profile",
+		"## Excursion Branch Agent Profile",
 		"",
-		`This temporary /branch is using agent profile: ${agent.name}`,
+		`This excursion branch is using agent profile: ${agent.name}`,
 		"",
 		`Agent description: ${agent.description}`,
 		"",
-		"Follow these agent-specific instructions for this branch:",
+		"Follow these agent-specific instructions for this excursion branch:",
 		"",
 		agent.systemPrompt.trim(),
 	].join("\n");
@@ -412,6 +434,10 @@ function getContextModeLabel(contextMode: BranchContextMode) {
 	if (contextMode === "compacted") return "Compacted context";
 	if (contextMode === "none") return "No prior context";
 	return "Full context";
+}
+
+function parseContextMode(value: unknown): BranchContextMode | undefined {
+	return value === "full" || value === "compacted" || value === "none" ? value : undefined;
 }
 
 function getNextContextMode(contextMode: BranchContextMode, direction = 1): BranchContextMode {
@@ -515,35 +541,6 @@ function getStateAgent(ctx: ExtensionContext, state: BranchState): AgentConfig |
 	return discoverAgents(ctx.cwd, "both").agents.find((agent) => agent.name === state.agentName);
 }
 
-function startBranch(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	prompt: string,
-	options?: { agentName?: string; agentScope?: AgentScope; deliverAs?: "followUp" | "steer"; contextMode?: BranchContextMode; deferPrompt?: boolean },
-): { ok: true; originId: string; prompt: string; agentName?: string; state: BranchState; contextBaseEntryId: string } | { ok: false; error: string } {
-	if (isSubagentProcess()) return { ok: false, error: "tree-excursions is disabled inside subprocess subagents." };
-
-	const currentLeafId = ctx.sessionManager.getLeafId();
-	if (!currentLeafId) {
-		return { ok: false, error: "Cannot start a branch before the session has a tree entry." };
-	}
-
-	const agentScope = options?.agentScope ?? "both";
-	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
-	if (resolved.error) return { ok: false, error: resolved.error };
-
-	const originId = appendBranchAnchorIfNeeded(pi, ctx, currentLeafId);
-	const state = appendBranchStartState(pi, ctx, originId, resolved.agent?.name, options?.contextMode);
-	pi.setLabel(originId, ORIGIN_LABEL);
-	const contextBaseEntryId = ctx.sessionManager.getLeafId();
-	if (!contextBaseEntryId) return { ok: false, error: "Failed to identify branch context base entry." };
-	refreshBranchState(pi, ctx);
-	if (!options?.deferPrompt) {
-		pi.sendUserMessage(formatBranchPrompt(prompt), options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
-	}
-	return { ok: true, originId, prompt, agentName: resolved.agent?.name, state, contextBaseEntryId };
-}
-
 function defaultBranchReturnInstructions(focus?: string) {
 	const base = [
 		"Summarize this excursion branch for returning to the main conversation.",
@@ -564,6 +561,7 @@ const ExcursionStartParams = Type.Object({
 				"Optional agent profile name from either user agents or trusted project-local .pi/agents, e.g. william or worker. The profile description and instructions are injected into the branch system prompt; no subprocess is spawned.",
 		}),
 	),
+	context_mode: Type.Optional(Type.String({ description: "Optional context mode: full, compacted, or none. Defaults to full." })),
 });
 
 const ExcursionReturnParams = Type.Object({
@@ -594,7 +592,7 @@ async function inputBranchPrompt(ctx: ExtensionCommandContext, title: string): P
 			render: (width: number) => [
 				...divider.render(width),
 				theme.bold(title),
-				theme.fg("muted", "Describe the task for this branch."),
+				theme.fg("muted", "Enter the requested text."),
 				...editor.render(width),
 				theme.fg("dim", "Enter submit · Shift+Enter newline · \\+Enter newline · Esc cancel"),
 				...divider.render(width),
@@ -621,28 +619,20 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	const selection = await selectBranchStartOptions(ctx);
 	if (!selection) return;
 
-	const promptTitle = selection.agentName ? `Branch task for ${selection.agentName}` : "Branch task";
-	const prompt = await inputBranchPrompt(ctx, promptTitle);
-	if (!prompt) {
-		notify(ctx, "/branch cancelled: no prompt entered.", "info");
-		return;
-	}
-
-	const contextMode = selection.contextMode;
-	const result = startBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "both", contextMode, deferPrompt: contextMode !== "full" });
+	const mode = selection.contextMode;
+	const result = startExcursion(pi, ctx, { agentName: selection.agentName, agentScope: "both", mode });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
 	}
 
 	const agentText = result.agentName ? ` using agent profile ${result.agentName}` : "";
-	if (contextMode === "none") {
+	if (mode === "none") {
 		pendingContextReset = { startEntryId: result.state.startEntryId, firstKeptEntryId: result.contextBaseEntryId };
 		notify(ctx, `Preparing no-context excursion branch${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
-				pi.sendUserMessage(formatBranchPrompt(prompt));
-				notify(ctx, `Started no-context excursion branch${agentText}.`, "info");
+				notify(ctx, `Started no-context excursion branch${agentText}. Type the excursion prompt as your next message.`, "info");
 			},
 			onError: (error) => {
 				pendingContextReset = undefined;
@@ -652,12 +642,11 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
-	if (contextMode === "compacted") {
+	if (mode === "compacted") {
 		notify(ctx, `Preparing compacted-context excursion branch${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
-				pi.sendUserMessage(formatBranchPrompt(prompt));
-				notify(ctx, `Started compacted-context excursion branch${agentText}.`, "info");
+				notify(ctx, `Started compacted-context excursion branch${agentText}. Type the excursion prompt as your next message.`, "info");
 			},
 			onError: (error) => {
 				notify(ctx, `Failed to prepare compacted-context branch: ${error.message}`, "error");
@@ -666,7 +655,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
-	notify(ctx, `Started excursion branch${agentText}.`, "info");
+	notify(ctx, `Started excursion branch${agentText}. Type the excursion prompt as your next message.`, "info");
 }
 
 async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forget: boolean, focus?: string, resultText?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
@@ -676,7 +665,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 		return { ok: false, error: "No active branch found." };
 	}
 
-	if (!ctx.sessionManager.getEntry(state.originId)) {
+	if (!ctx.sessionManager.getEntry(state.headEntryId)) {
 		refreshBranchState(pi, ctx);
 		const error = "Stored excursion return point no longer exists.";
 		notify(ctx, error, "error");
@@ -702,7 +691,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	if (!forget && manualSummary) {
 		pendingManualReturnSummary = {
 			startEntryId: state.startEntryId,
-			targetId: state.originId,
+			targetId: state.headEntryId,
 			oldLeafId,
 			summary: manualSummary,
 		};
@@ -710,7 +699,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 
 	const navigate = () =>
 		ctx.navigateTree!(
-			state.originId,
+			state.headEntryId,
 			forget
 				? undefined
 				: {
@@ -736,13 +725,13 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 					})
 				: await navigate();
 	} finally {
-		if (pendingManualReturnSummary?.startEntryId === state.startEntryId && pendingManualReturnSummary.oldLeafId === oldLeafId && pendingManualReturnSummary.targetId === state.originId) {
+		if (pendingManualReturnSummary?.startEntryId === state.startEntryId && pendingManualReturnSummary.oldLeafId === oldLeafId && pendingManualReturnSummary.targetId === state.headEntryId) {
 			pendingManualReturnSummary = undefined;
 		}
 	}
 
 	refreshBranchState(pi, ctx);
-	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
+	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from excursion branch.", result.cancelled ? "warning" : "info");
 	return { ok: true, cancelled: result.cancelled };
 }
 
@@ -807,7 +796,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 			summary: {
 				summary: pending.summary,
 				details: {
-					customType: CUSTOM_TYPE,
+					customType: EXCURSION_START_TYPE,
 					mode: "manual_summary",
 					startEntryId: pending.startEntryId,
 					targetId: pending.targetId,
@@ -841,8 +830,8 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				firstKeptEntryId: reset.firstKeptEntryId,
 				tokensBefore: event.preparation.tokensBefore,
 				details: {
-					customType: CUSTOM_TYPE,
-					contextMode: "none",
+					customType: EXCURSION_START_TYPE,
+					mode: "none",
 					startEntryId: reset.startEntryId,
 				},
 			},
@@ -868,8 +857,8 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 		description: [
 			"Start a visible excursion branch task in the current Pi session tree.",
 			"Use when a subagent-style investigation is helpful but true parallel subprocess isolation is not required.",
-			"This queues the branch task; the user must later run /branch-return to summarize the branch and return to the origin.",
-			"Nested branches are allowed; the closest branch start on the current session path determines active branch behavior.",
+			"This queues the branch task; the user must later run /branch-return to summarize the branch and return to the excursion head.",
+			"Nested branches are allowed; the closest excursion start on the current session path determines active branch behavior.",
 			"Optionally provide an agent profile name from either user agents or trusted project-local .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
 		].join(" "),
 		promptSnippet: "excursion_start: start a branch task; user later runs /branch-return to summarize and return.",
@@ -885,13 +874,38 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: "Missing prompt." }], isError: true };
 			}
 
-			const result = startBranch(pi, ctx, prompt, {
+			const mode = parseContextMode(params.context_mode) ?? "full";
+			if (params.context_mode !== undefined && !parseContextMode(params.context_mode)) {
+				return { content: [{ type: "text", text: "context_mode must be one of: full, compacted, none." }], isError: true };
+			}
+
+			const compact = (ctx as Partial<ExtensionCommandContext>).compact;
+			if ((mode === "none" || mode === "compacted") && typeof compact !== "function") {
+				return { content: [{ type: "text", text: `${mode} context requires compact() support in this context.` }], isError: true };
+			}
+
+			const result = startExcursion(pi, ctx, {
 				agentName: params.agent,
 				agentScope: "both",
-				deliverAs: ctx.isIdle() ? undefined : "followUp",
+				mode,
 			});
 			if (!result.ok) {
 				return { content: [{ type: "text", text: result.error }], isError: true };
+			}
+
+			const sendPrompt = () => pi.sendUserMessage(prompt, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
+			if (mode === "none" || mode === "compacted") {
+				if (mode === "none") {
+					pendingContextReset = { startEntryId: result.state.startEntryId, firstKeptEntryId: result.contextBaseEntryId };
+				}
+				compact!.call(ctx, {
+					onComplete: sendPrompt,
+					onError: () => {
+						if (mode === "none") pendingContextReset = undefined;
+					},
+				});
+			} else {
+				sendPrompt();
 			}
 
 			const agentText = result.agentName ? ` using agent profile \`${result.agentName}\`` : "";
@@ -956,12 +970,12 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 						text: result.cancelled
 							? "Branch return was cancelled."
 							: mode === "without_summary"
-								? "Returned from branch without summary."
+								? "Returned from excursion branch without summary."
 								: mode === "result"
-									? "Returned from branch with manual summary."
+									? "Returned from excursion branch with manual summary."
 									: focusText
-										? "Returned from branch with focused summary."
-										: "Returned from branch with automatic summary.",
+										? "Returned from excursion branch with focused summary."
+										: "Returned from excursion branch with automatic summary.",
 					},
 				],
 			};
@@ -969,11 +983,11 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("branch", {
-		description: "Start a visible excursion branch",
+		description: "Start an excursion branch",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 			if (args.trim()) {
-				notify(ctx, "Run /branch with no arguments to start a branch.", "warning");
+				notify(ctx, "Run /branch with no arguments to start an excursion branch.", "warning");
 				return;
 			}
 			await startBranchFromMenu(pi, ctx);
