@@ -11,6 +11,7 @@ const WIDGET_ID = "branch";
 const RETURN_TOOL_NAME = "excursion_return";
 const NO_CONTEXT_SUMMARY = "This excursion branch intentionally starts with no prior conversation history. The next user message defines the excursion task.";
 const EXCURSION_START_MESSAGE = "This is the start of an excursion branch.";
+const WITHOUT_SUMMARY_RETURN_TEXT = "The user explored a branch and returned without providing a summary.";
 
 type AgentScope = "user" | "project" | "both";
 type BranchContextMode = "full" | "compacted" | "none";
@@ -678,7 +679,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	}
 
 	if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
-	const manualSummary = resultText?.trim();
+	const manualSummary = (forget ? WITHOUT_SUMMARY_RETURN_TEXT : resultText)?.trim();
 	const returnMessage = forget
 		? "Returning from excursion branch without summary..."
 		: manualSummary
@@ -687,7 +688,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	if (forget || !ctx.hasUI) notify(ctx, returnMessage, "info");
 
 	const oldLeafId = ctx.sessionManager.getLeafId();
-	if (!forget && manualSummary) {
+	if (manualSummary) {
 		pendingManualReturnSummary = {
 			startEntryId: state.startEntryId,
 			targetId: state.headEntryId,
@@ -697,15 +698,10 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	}
 
 	const navigate = () =>
-		ctx.navigateTree!(
-			state.headEntryId,
-			forget
-				? undefined
-				: {
-						summarize: true,
-						customInstructions: manualSummary ? undefined : defaultBranchReturnInstructions(focus),
-					},
-		);
+		ctx.navigateTree!(state.headEntryId, {
+			summarize: true,
+			customInstructions: manualSummary ? undefined : defaultBranchReturnInstructions(focus),
+		});
 
 	let result: Awaited<ReturnType<NonNullable<BranchReturnContext["navigateTree"]>>>;
 	try {
