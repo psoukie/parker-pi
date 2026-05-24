@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DynamicBorder, getAgentDir, parseFrontmatter, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, DynamicBorder, getAgentDir, parseFrontmatter, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Editor, Key, matchesKey, SelectList, type EditorTheme, type SelectItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -686,18 +686,34 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	}
 
 	if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
-	notify(ctx, forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`, "info");
+	const returnMessage = forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`;
+	if (forget || !ctx.hasUI) notify(ctx, returnMessage, "info");
 
-	const result = await ctx.navigateTree(
-		state.originId,
-		forget
-			? undefined
-			: {
-					summarize: true,
-					customInstructions: defaultBranchReturnInstructions(focus, resultText),
-					label: RETURN_LABEL,
-				},
-	);
+	const navigate = () =>
+		ctx.navigateTree!(
+			state.originId,
+			forget
+				? undefined
+				: {
+						summarize: true,
+						customInstructions: defaultBranchReturnInstructions(focus, resultText),
+						label: RETURN_LABEL,
+					},
+		);
+
+	const result =
+		!forget && ctx.hasUI
+			? await ctx.ui.custom<Awaited<ReturnType<NonNullable<BranchReturnContext["navigateTree"]>>>>((tui, theme, _keybindings, done) => {
+					const loader = new BorderedLoader(tui, theme, returnMessage);
+					navigate()
+						.then(done)
+						.catch((error) => {
+							notify(ctx, error instanceof Error ? error.message : "Branch return failed.", "error");
+							done({ cancelled: true });
+						});
+					return loader;
+				})
+			: await navigate();
 
 	refreshBranchState(pi, ctx);
 	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
