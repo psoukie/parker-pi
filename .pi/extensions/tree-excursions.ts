@@ -53,7 +53,15 @@ interface PendingContextReset {
 	firstKeptEntryId: string;
 }
 
+interface PendingManualReturnSummary {
+	startEntryId: string;
+	targetId: string;
+	oldLeafId: string | null;
+	summary: string;
+}
+
 let pendingContextReset: PendingContextReset | undefined;
+let pendingManualReturnSummary: PendingManualReturnSummary | undefined;
 
 function isSubagentProcess() {
 	return process.env.PI_SUBAGENT === "1";
@@ -536,19 +544,12 @@ function startBranch(
 	return { ok: true, originId, prompt, agentName: resolved.agent?.name, state, contextBaseEntryId };
 }
 
-function defaultBranchReturnInstructions(focus?: string, result?: string) {
-	const base = result?.trim()
-		? [
-				"Return from this temporary branch using the provided result.",
-				"Preserve the result clearly and concisely. Do not re-summarize the entire branch unless needed to make the result understandable.",
-				"",
-				`Provided result: ${result.trim()}`,
-			]
-		: [
-				"Summarize this temporary branch for returning to the main conversation.",
-				"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
-				"Be concise and preserve only information useful for continuing from the original point.",
-			];
+function defaultBranchReturnInstructions(focus?: string) {
+	const base = [
+		"Summarize this temporary branch for returning to the main conversation.",
+		"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
+		"Be concise and preserve only information useful for continuing from the original point.",
+	];
 	if (focus?.trim()) {
 		base.push("", `Additional focus from user: ${focus.trim()}`);
 	}
@@ -689,8 +690,23 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	}
 
 	if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
-	const returnMessage = forget ? `Returning to branch origin ${state.originId} without summary...` : `Returning to branch origin ${state.originId} with branch summary...`;
+	const manualSummary = resultText?.trim();
+	const returnMessage = forget
+		? `Returning to branch origin ${state.originId} without summary...`
+		: manualSummary
+			? `Returning to branch origin ${state.originId} with manual summary...`
+			: `Returning to branch origin ${state.originId} with branch summary...`;
 	if (forget || !ctx.hasUI) notify(ctx, returnMessage, "info");
+
+	const oldLeafId = ctx.sessionManager.getLeafId();
+	if (!forget && manualSummary) {
+		pendingManualReturnSummary = {
+			startEntryId: state.startEntryId,
+			targetId: state.originId,
+			oldLeafId,
+			summary: manualSummary,
+		};
+	}
 
 	const navigate = () =>
 		ctx.navigateTree!(
@@ -699,24 +715,31 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 				? undefined
 				: {
 						summarize: true,
-						customInstructions: defaultBranchReturnInstructions(focus, resultText),
+						customInstructions: manualSummary ? undefined : defaultBranchReturnInstructions(focus),
 						label: RETURN_LABEL,
 					},
 		);
 
-	const result =
-		!forget && ctx.hasUI
-			? await ctx.ui.custom<Awaited<ReturnType<NonNullable<BranchReturnContext["navigateTree"]>>>>((tui, theme, _keybindings, done) => {
-					const loader = new BorderedLoader(tui, theme, returnMessage);
-					navigate()
-						.then(done)
-						.catch((error) => {
-							notify(ctx, error instanceof Error ? error.message : "Branch return failed.", "error");
-							done({ cancelled: true });
-						});
-					return loader;
-				})
-			: await navigate();
+	let result: Awaited<ReturnType<NonNullable<BranchReturnContext["navigateTree"]>>>;
+	try {
+		result =
+			!forget && ctx.hasUI
+				? await ctx.ui.custom<Awaited<ReturnType<NonNullable<BranchReturnContext["navigateTree"]>>>>((tui, theme, _keybindings, done) => {
+						const loader = new BorderedLoader(tui, theme, returnMessage);
+						navigate()
+							.then(done)
+							.catch((error) => {
+								notify(ctx, error instanceof Error ? error.message : "Branch return failed.", "error");
+								done({ cancelled: true });
+							});
+						return loader;
+					})
+				: await navigate();
+	} finally {
+		if (pendingManualReturnSummary?.startEntryId === state.startEntryId && pendingManualReturnSummary.oldLeafId === oldLeafId && pendingManualReturnSummary.targetId === state.originId) {
+			pendingManualReturnSummary = undefined;
+		}
+	}
 
 	refreshBranchState(pi, ctx);
 	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
@@ -770,6 +793,30 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
 		refreshBranchState(pi, ctx);
+	});
+
+	pi.on("session_before_tree", async (event) => {
+		if (isSubagentProcess()) return;
+		const pending = pendingManualReturnSummary;
+		if (!pending) return;
+		if (!event.preparation.userWantsSummary) return;
+		if (event.preparation.targetId !== pending.targetId || event.preparation.oldLeafId !== pending.oldLeafId) return;
+
+		pendingManualReturnSummary = undefined;
+		return {
+			summary: {
+				summary: pending.summary,
+				details: {
+					customType: CUSTOM_TYPE,
+					mode: "manual_summary",
+					startEntryId: pending.startEntryId,
+					targetId: pending.targetId,
+					oldLeafId: pending.oldLeafId,
+					timestamp: new Date().toISOString(),
+				},
+			},
+			label: RETURN_LABEL,
+		};
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
