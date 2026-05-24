@@ -63,6 +63,8 @@ interface PendingManualReturnSummary {
 	summary: string;
 }
 
+type BranchReturnChoice = "auto" | "focused" | "manual" | "without";
+
 let pendingContextReset: PendingContextReset | undefined;
 let pendingManualReturnSummary: PendingManualReturnSummary | undefined;
 
@@ -729,6 +731,44 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	return { ok: true, cancelled: result.cancelled };
 }
 
+async function selectBranchReturnOption(ctx: ExtensionCommandContext): Promise<BranchReturnChoice | null> {
+	const items: SelectItem[] = [
+		{ value: "auto", label: "Auto summary", description: "Generate a normal concise summary before returning" },
+		{ value: "focused", label: "Focused summary...", description: "Provide guidance about what the summary should emphasize" },
+		{ value: "manual", label: "Manual summary...", description: "Type the exact summary text to carry back" },
+		{ value: "without", label: "Without summary", description: "Return without a user summary; preserve only a placeholder note" },
+	];
+
+	return await ctx.ui.custom<BranchReturnChoice | null>((_tui, theme, _keybindings, done) => {
+		const divider = new DynamicBorder((s: string) => theme.fg("border", s));
+		const selectList = new SelectList(items, Math.min(items.length, 10), {
+			selectedPrefix: (text: string) => theme.fg("accent", text),
+			selectedText: (text: string) => theme.fg("accent", text),
+			description: (text: string) => theme.fg("muted", text),
+			scrollInfo: (text: string) => theme.fg("dim", text),
+			noMatch: (text: string) => theme.fg("warning", text),
+		});
+
+		selectList.onSelect = (item: SelectItem) => done(item.value as BranchReturnChoice);
+		selectList.onCancel = () => done(null);
+
+		return {
+			render: (width: number) => [
+				...divider.render(width),
+				theme.bold("Branch Return"),
+				theme.fg("muted", "Choose how to summarize this excursion before returning."),
+				...divider.render(width),
+				...selectList.render(width),
+				...divider.render(width),
+				theme.fg("dim", "↑↓ option · Enter select · Esc cancel"),
+				...divider.render(width),
+			],
+			invalidate: () => selectList.invalidate(),
+			handleInput: (data: string) => selectList.handleInput(data),
+		};
+	});
+}
+
 async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 	const state = refreshBranchState(pi, ctx);
 
@@ -737,19 +777,14 @@ async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandConte
 		return;
 	}
 
-	const choice = await ctx.ui.select("Branch Return", [
-		"Auto summary",
-		"Focused summary...",
-		"Manual summary...",
-		"Without summary",
-	]);
+	const choice = await selectBranchReturnOption(ctx);
 	if (!choice) return;
 
-	if (choice === "Auto summary") {
+	if (choice === "auto") {
 		await returnFromBranch(pi, ctx, false);
 		return;
 	}
-	if (choice === "Focused summary...") {
+	if (choice === "focused") {
 		const focus = await inputBranchPrompt(ctx, "Focused branch summary");
 		if (!focus) {
 			notify(ctx, "/branch-return cancelled: no summary focus entered.", "info");
@@ -758,7 +793,7 @@ async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandConte
 		await returnFromBranch(pi, ctx, false, focus);
 		return;
 	}
-	if (choice === "Manual summary...") {
+	if (choice === "manual") {
 		const summary = await inputBranchPrompt(ctx, "Manual branch summary");
 		if (!summary) {
 			notify(ctx, "/branch-return cancelled: no manual summary entered.", "info");
@@ -767,7 +802,7 @@ async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandConte
 		await returnFromBranch(pi, ctx, false, undefined, summary);
 		return;
 	}
-	if (choice === "Without summary") {
+	if (choice === "without") {
 		await returnFromBranch(pi, ctx, true);
 	}
 }
