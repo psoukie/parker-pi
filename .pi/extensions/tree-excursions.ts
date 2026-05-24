@@ -5,10 +5,13 @@ import { Editor, Key, matchesKey, SelectList, type EditorTheme, type SelectItem 
 import { Type } from "typebox";
 
 const CUSTOM_TYPE = "branch";
+const ANCHOR_TYPE = "branch-anchor";
 const WIDGET_ID = "branch";
 const ORIGIN_LABEL = "branch-origin";
 const RETURN_LABEL = "branch-return";
+const RETURN_TOOL_NAME = "excursion_return";
 const NO_CONTEXT_SUMMARY = "This branch intentionally starts with no prior conversation history. The next user message defines the branch task.";
+const BRANCH_PROMPT_PREFIX = "[START OF BRANCH EXCURSION]";
 
 type AgentScope = "user" | "project" | "both";
 type BranchContextMode = "full" | "compacted" | "none";
@@ -182,6 +185,30 @@ function readBranchState(ctx: ExtensionContext): BranchState | undefined {
 	return undefined;
 }
 
+function appendBranchAnchorIfNeeded(pi: ExtensionAPI, ctx: ExtensionContext, originId: string): string {
+	const leaf = ctx.sessionManager.getLeafEntry();
+	if (!leaf) throw new Error("Cannot inspect current branch origin leaf.");
+	if (leaf.id !== originId) throw new Error("Current leaf changed before branch start state could be recorded.");
+	if (leaf.type === "assistant") return originId;
+	if ((leaf.type === "custom_message" || leaf.type === "custom") && leaf.customType === ANCHOR_TYPE) return originId;
+
+	pi.sendMessage({
+		customType: ANCHOR_TYPE,
+		content: "",
+		display: true,
+		details: {
+			version: 1,
+			timestamp: new Date().toISOString(),
+			anchoredFromId: originId,
+			anchoredFromType: leaf.type,
+		},
+	});
+
+	const anchorId = ctx.sessionManager.getLeafId();
+	if (!anchorId) throw new Error("Failed to append branch anchor.");
+	return anchorId;
+}
+
 function appendBranchStartState(pi: ExtensionAPI, ctx: ExtensionContext, originId: string, agentName?: string, contextMode?: BranchContextMode): BranchState {
 	pi.appendEntry<BranchEntryData>(CUSTOM_TYPE, {
 		version: 1,
@@ -207,8 +234,34 @@ function setBranchWidget(ctx: ExtensionContext, state: BranchState | undefined) 
 	ctx.ui.setWidget(WIDGET_ID, [ctx.ui.theme.fg("accent", text)]);
 }
 
+function setBranchReturnToolActive(pi: ExtensionAPI, active: boolean) {
+	const activeTools = pi.getActiveTools();
+	const hasTool = activeTools.includes(RETURN_TOOL_NAME);
+	if (active === hasTool) return;
+	pi.setActiveTools(active ? [...activeTools, RETURN_TOOL_NAME] : activeTools.filter((name) => name !== RETURN_TOOL_NAME));
+}
+
+function refreshBranchState(pi: ExtensionAPI, ctx: ExtensionContext): BranchState | undefined {
+	const state = readBranchState(ctx);
+	setBranchWidget(ctx, state);
+	setBranchReturnToolActive(pi, Boolean(state));
+	return state;
+}
+
 function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info") {
 	if (ctx.hasUI) ctx.ui.notify(message, level);
+}
+
+function suggestBranchReturnInEditor(ctx: ExtensionContext) {
+	if (!ctx.hasUI) return false;
+	const existing = ctx.ui.getEditorText();
+	const prefix = existing.trim() ? "\n" : "";
+	ctx.ui.pasteToEditor(`${prefix}/branch-return`);
+	return true;
+}
+
+function formatBranchPrompt(prompt: string) {
+	return `${BRANCH_PROMPT_PREFIX}\n\n${prompt}`;
 }
 
 function buildAgentSystemPrompt(agent: AgentConfig) {
@@ -346,8 +399,8 @@ function startBranch(
 ): { ok: true; originId: string; prompt: string; agentName?: string; state: BranchState; contextBaseEntryId: string } | { ok: false; error: string } {
 	if (isSubagentProcess()) return { ok: false, error: "tree-excursions is disabled inside subprocess subagents." };
 
-	const originId = ctx.sessionManager.getLeafId();
-	if (!originId) {
+	const currentLeafId = ctx.sessionManager.getLeafId();
+	if (!currentLeafId) {
 		return { ok: false, error: "Cannot start a branch before the session has a tree entry." };
 	}
 
@@ -355,23 +408,31 @@ function startBranch(
 	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
 	if (resolved.error) return { ok: false, error: resolved.error };
 
+	const originId = appendBranchAnchorIfNeeded(pi, ctx, currentLeafId);
 	const state = appendBranchStartState(pi, ctx, originId, resolved.agent?.name, options?.contextMode);
 	pi.setLabel(originId, ORIGIN_LABEL);
 	const contextBaseEntryId = ctx.sessionManager.getLeafId();
 	if (!contextBaseEntryId) return { ok: false, error: "Failed to identify branch context base entry." };
-	setBranchWidget(ctx, state);
+	refreshBranchState(pi, ctx);
 	if (!options?.deferPrompt) {
-		pi.sendUserMessage(prompt, options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
+		pi.sendUserMessage(formatBranchPrompt(prompt), options?.deliverAs ? { deliverAs: options.deliverAs } : undefined);
 	}
 	return { ok: true, originId, prompt, agentName: resolved.agent?.name, state, contextBaseEntryId };
 }
 
-function defaultBranchReturnInstructions(focus?: string) {
-	const base = [
-		"Summarize this temporary branch for returning to the main conversation.",
-		"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
-		"Be concise and preserve only information useful for continuing from the original point.",
-	];
+function defaultBranchReturnInstructions(focus?: string, result?: string) {
+	const base = result?.trim()
+		? [
+				"Return from this temporary branch using the provided result.",
+				"Preserve the result clearly and concisely. Do not re-summarize the entire branch unless needed to make the result understandable.",
+				"",
+				`Provided result: ${result.trim()}`,
+			]
+		: [
+				"Summarize this temporary branch for returning to the main conversation.",
+				"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
+				"Be concise and preserve only information useful for continuing from the original point.",
+			];
 	if (focus?.trim()) {
 		base.push("", `Additional focus from user: ${focus.trim()}`);
 	}
@@ -389,7 +450,13 @@ const ExcursionStartParams = Type.Object({
 });
 
 const ExcursionReturnParams = Type.Object({
-	summarize: Type.Optional(Type.Boolean({ description: "Whether to summarize the branch while returning. Defaults to true." })),
+	mode: Type.Optional(
+		Type.Union(
+			[Type.Literal("summary"), Type.Literal("without_summary"), Type.Literal("result")],
+			{ description: "How to return from the active branch. Use summary by default, without_summary only when nothing needs to be preserved, and result when you can provide the concise final result directly." },
+		),
+	),
+	result: Type.Optional(Type.String({ description: "Concise final result to carry back when mode is result." })),
 	focus: Type.Optional(Type.String({ description: "Optional extra guidance for the return summary." })),
 });
 
@@ -461,7 +528,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		notify(ctx, `Preparing no-context branch from ${result.originId}${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
-				pi.sendUserMessage(prompt);
+				pi.sendUserMessage(formatBranchPrompt(prompt));
 				notify(ctx, `Started no-context branch from ${result.originId}${agentText}`, "info");
 			},
 			onError: (error) => {
@@ -476,7 +543,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		notify(ctx, `Preparing compacted-context branch from ${result.originId}${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
-				pi.sendUserMessage(prompt);
+				pi.sendUserMessage(formatBranchPrompt(prompt));
 				notify(ctx, `Started compacted-context branch from ${result.originId}${agentText}`, "info");
 			},
 			onError: (error) => {
@@ -489,7 +556,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
 }
 
-async function returnFromBranch(ctx: BranchReturnContext, forget: boolean, focus?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
+async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forget: boolean, focus?: string, resultText?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
 	const state = readBranchState(ctx);
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
@@ -497,7 +564,7 @@ async function returnFromBranch(ctx: BranchReturnContext, forget: boolean, focus
 	}
 
 	if (!ctx.sessionManager.getEntry(state.originId)) {
-		setBranchWidget(ctx, undefined);
+		refreshBranchState(pi, ctx);
 		const error = `Stored branch origin ${state.originId} no longer exists.`;
 		notify(ctx, error, "error");
 		return { ok: false, error };
@@ -518,19 +585,18 @@ async function returnFromBranch(ctx: BranchReturnContext, forget: boolean, focus
 			? undefined
 			: {
 					summarize: true,
-					customInstructions: defaultBranchReturnInstructions(focus),
+					customInstructions: defaultBranchReturnInstructions(focus, resultText),
 					label: RETURN_LABEL,
 				},
 	);
 
-	setBranchWidget(ctx, readBranchState(ctx));
+	refreshBranchState(pi, ctx);
 	notify(ctx, result.cancelled ? "/branch-return cancelled." : "Returned from branch.", result.cancelled ? "warning" : "info");
 	return { ok: true, cancelled: result.cancelled };
 }
 
-async function showBranchReturnMenu(ctx: ExtensionCommandContext) {
-	const state = readBranchState(ctx);
-	setBranchWidget(ctx, state);
+async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
+	const state = refreshBranchState(pi, ctx);
 
 	if (!state) {
 		notify(ctx, "No active branch found.", "warning");
@@ -541,23 +607,23 @@ async function showBranchReturnMenu(ctx: ExtensionCommandContext) {
 	if (!choice) return;
 
 	if (choice === "Return with summary") {
-		await returnFromBranch(ctx, false);
+		await returnFromBranch(pi, ctx, false);
 		return;
 	}
 	if (choice === "Return without summary") {
-		await returnFromBranch(ctx, true);
+		await returnFromBranch(pi, ctx, true);
 	}
 }
 
 export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
-		setBranchWidget(ctx, readBranchState(ctx));
+		refreshBranchState(pi, ctx);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		if (isSubagentProcess()) return;
-		setBranchWidget(ctx, readBranchState(ctx));
+		refreshBranchState(pi, ctx);
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -587,7 +653,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (isSubagentProcess()) return;
-		const state = readBranchState(ctx);
+		const state = refreshBranchState(pi, ctx);
 		if (!state?.agentName) return;
 
 		const agent = getStateAgent(ctx, state);
@@ -645,12 +711,13 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "excursion_return",
 		label: "Excursion Return",
-		description: "Return from the active visible branch to its stored origin, optionally summarizing the branch first.",
-		promptSnippet: "excursion_return: return from the active branch to its stored origin.",
+		description: "When the purpose of the active branch exploration has been achieved, call this tool to return to the parent branch.",
+		promptSnippet: "excursion_return: return from the active branch to the parent branch.",
 		promptGuidelines: [
-			"Use excursion_return when a visible branch task is complete and returning to the origin would help the user continue.",
-			"Only use excursion_return when already inside an active branch.",
-			"Set summarize to false to return without a summary; otherwise Pi will create a branch-return summary breadcrumb.",
+			"Use excursion_return when the active branch exploration is complete and the result should be carried back to the parent branch.",
+			"Call excursion_return when the user asks to return from, end, close, finish, or summarize the active branch.",
+			"Use mode=summary by default. Use mode=without_summary only when the user asked to return without preserving branch context. Use mode=result when you can provide the concise final result directly.",
+			"The user is shown the tool result directly, so do not repeat routine operational details from the tool output unless extra explanation is actually needed.",
 		],
 		parameters: ExcursionReturnParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -658,7 +725,17 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 			if (!state) {
 				return { content: [{ type: "text", text: "No active branch found." }], isError: true };
 			}
-			const result = await returnFromBranch(ctx, params.summarize === false, params.focus);
+			const mode = params.mode ?? "summary";
+			const resultText = mode === "result" ? params.result?.trim() : undefined;
+			if (mode === "result" && !resultText) {
+				return { content: [{ type: "text", text: "mode=result requires a concise result." }], isError: true };
+			}
+			if (typeof (ctx as BranchReturnContext).navigateTree !== "function") {
+				const inserted = suggestBranchReturnInEditor(ctx);
+				const text = inserted ? "Inserted /branch-return into the editor. Press Enter." : "Run /branch-return.";
+				return { content: [{ type: "text", text }] };
+			}
+			const result = await returnFromBranch(pi, ctx, mode === "without_summary", params.focus, resultText);
 			if (!result.ok) {
 				return { content: [{ type: "text", text: result.error }], isError: true };
 			}
@@ -668,7 +745,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 						type: "text",
 						text: result.cancelled
 							? "Branch return was cancelled."
-							: params.summarize === false
+							: mode === "without_summary"
 								? "Returned from branch without summary."
 								: "Returned from branch with summary.",
 					},
@@ -697,7 +774,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				notify(ctx, "Run /branch-return with no arguments and choose summary behavior from the menu.", "warning");
 				return;
 			}
-			await showBranchReturnMenu(ctx);
+			await showBranchReturnMenu(pi, ctx);
 		},
 	});
 }
