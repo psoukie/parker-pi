@@ -252,12 +252,121 @@ function notify(ctx: ExtensionContext, message: string, level: "info" | "warning
 	if (ctx.hasUI) ctx.ui.notify(message, level);
 }
 
-function suggestBranchReturnInEditor(ctx: ExtensionContext) {
+function tokenizeCommandArgs(input: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let quote: '"' | "'" | undefined;
+	let escaping = false;
+
+	for (const char of input) {
+		if (escaping) {
+			current += char;
+			escaping = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaping = true;
+			continue;
+		}
+		if (quote) {
+			if (char === quote) {
+				quote = undefined;
+			} else {
+				current += char;
+			}
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (/\s/.test(char)) {
+			if (current) {
+				tokens.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+
+	if (escaping) current += "\\";
+	if (quote) throw new Error(`Unterminated ${quote} quote in command arguments.`);
+	if (current) tokens.push(current);
+	return tokens;
+}
+
+function quoteCommandArg(value: string): string {
+	if (/^[^\s"'\\]+$/.test(value)) return value;
+	return JSON.stringify(value);
+}
+
+function buildBranchReturnCommand(options?: { mode?: "summary" | "without_summary" | "result"; focus?: string; result?: string }) {
+	const parts = ["/branch-return"];
+	if (options?.mode === "without_summary") {
+		parts.push("--without-summary");
+	} else {
+		if (options?.mode === "summary") parts.push("--summary");
+		if (options?.focus?.trim()) parts.push("--focus", quoteCommandArg(options.focus.trim()));
+		if (options?.mode === "result" && options.result?.trim()) parts.push("--result", quoteCommandArg(options.result.trim()));
+	}
+	return parts.join(" ");
+}
+
+function suggestBranchReturnInEditor(ctx: ExtensionContext, options?: { mode?: "summary" | "without_summary" | "result"; focus?: string; result?: string }) {
 	if (!ctx.hasUI) return false;
 	const existing = ctx.ui.getEditorText();
 	const prefix = existing.trim() ? "\n" : "";
-	ctx.ui.pasteToEditor(`${prefix}/branch-return`);
+	ctx.ui.pasteToEditor(`${prefix}${buildBranchReturnCommand(options)}`);
 	return true;
+}
+
+function parseBranchReturnArgs(args: string): { mode: "summary" | "without_summary" | "result"; focus?: string; result?: string } | { error: string } {
+	const trimmed = args.trim();
+	if (!trimmed) return { mode: "summary" };
+
+	let tokens: string[];
+	try {
+		tokens = tokenizeCommandArgs(trimmed);
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : "Failed to parse /branch-return arguments." };
+	}
+
+	let mode: "summary" | "without_summary" | "result" = "summary";
+	let focus: string | undefined;
+	let result: string | undefined;
+
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token === "--summary") {
+			mode = "summary";
+			continue;
+		}
+		if (token === "--without-summary") {
+			mode = "without_summary";
+			continue;
+		}
+		if (token === "--focus") {
+			const value = tokens[++i];
+			if (!value) return { error: "--focus requires text." };
+			focus = value;
+			continue;
+		}
+		if (token === "--result") {
+			const value = tokens[++i];
+			if (!value) return { error: "--result requires text." };
+			result = value;
+			mode = "result";
+			continue;
+		}
+		return { error: `Unknown /branch-return argument: ${token}` };
+	}
+
+	if (mode === "without_summary" && (focus?.trim() || result?.trim())) {
+		return { error: "--without-summary cannot be combined with --focus or --result." };
+	}
+	if (mode === "result" && !result?.trim()) return { error: "--result requires text." };
+	return { mode, focus: focus?.trim() || undefined, result: result?.trim() || undefined };
 }
 
 function formatBranchPrompt(prompt: string) {
@@ -731,8 +840,9 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: "mode=result requires a concise result." }], isError: true };
 			}
 			if (typeof (ctx as BranchReturnContext).navigateTree !== "function") {
-				const inserted = suggestBranchReturnInEditor(ctx);
-				const text = inserted ? "Inserted /branch-return into the editor. Press Enter." : "Run /branch-return.";
+				const inserted = suggestBranchReturnInEditor(ctx, { mode, focus: params.focus, result: resultText });
+				const command = buildBranchReturnCommand({ mode, focus: params.focus, result: resultText });
+				const text = inserted ? `Inserted ${command} into the editor. Press Enter.` : `Run ${command}.`;
 				return { content: [{ type: "text", text }] };
 			}
 			const result = await returnFromBranch(pi, ctx, mode === "without_summary", params.focus, resultText);
@@ -770,11 +880,17 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 		description: "Return from the nearest active session-tree branch",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
-			if (args.trim()) {
-				notify(ctx, "Run /branch-return with no arguments and choose summary behavior from the menu.", "warning");
+			const parsed = parseBranchReturnArgs(args);
+			if ("error" in parsed) {
+				notify(ctx, parsed.error, "warning");
 				return;
 			}
-			await showBranchReturnMenu(pi, ctx);
+			if (!args.trim()) {
+				await showBranchReturnMenu(pi, ctx);
+				return;
+			}
+			const result = await returnFromBranch(pi, ctx, parsed.mode === "without_summary", parsed.focus, parsed.result);
+			if (!result.ok) return;
 		},
 	});
 }
