@@ -305,10 +305,12 @@ function buildBranchReturnCommand(options?: { mode?: "summary" | "without_summar
 	const parts = ["/branch-return"];
 	if (options?.mode === "without_summary") {
 		parts.push("--without-summary");
-	} else {
-		if (options?.mode === "summary") parts.push("--summary");
-		if (options?.focus?.trim()) parts.push("--focus", quoteCommandArg(options.focus.trim()));
-		if (options?.mode === "result" && options.result?.trim()) parts.push("--result", quoteCommandArg(options.result.trim()));
+	} else if (options?.mode === "result" && options.result?.trim()) {
+		parts.push("--manual-summary", quoteCommandArg(options.result.trim()));
+	} else if (options?.focus?.trim()) {
+		parts.push("--focused-summary", quoteCommandArg(options.focus.trim()));
+	} else if (options?.mode === "summary") {
+		parts.push("--auto-summary");
 	}
 	return parts.join(" ");
 }
@@ -332,29 +334,34 @@ function parseBranchReturnArgs(args: string): { mode: "summary" | "without_summa
 		return { error: error instanceof Error ? error.message : "Failed to parse /branch-return arguments." };
 	}
 
-	let mode: "summary" | "without_summary" | "result" = "summary";
+	let mode: "summary" | "without_summary" | "result" | undefined;
 	let focus: string | undefined;
 	let result: string | undefined;
 
 	for (let i = 0; i < tokens.length; i++) {
 		const token = tokens[i];
-		if (token === "--summary") {
+		if (token === "--auto-summary") {
+			if (mode) return { error: "Use exactly one of --auto-summary, --focused-summary, --without-summary, or --manual-summary." };
 			mode = "summary";
 			continue;
 		}
 		if (token === "--without-summary") {
+			if (mode) return { error: "Use exactly one of --auto-summary, --focused-summary, --without-summary, or --manual-summary." };
 			mode = "without_summary";
 			continue;
 		}
-		if (token === "--focus") {
+		if (token === "--focused-summary") {
+			if (mode) return { error: "Use exactly one of --auto-summary, --focused-summary, --without-summary, or --manual-summary." };
 			const value = tokens[++i];
-			if (!value) return { error: "--focus requires text." };
+			if (!value) return { error: "--focused-summary requires text." };
 			focus = value;
+			mode = "summary";
 			continue;
 		}
-		if (token === "--result") {
+		if (token === "--manual-summary") {
+			if (mode) return { error: "Use exactly one of --auto-summary, --focused-summary, --without-summary, or --manual-summary." };
 			const value = tokens[++i];
-			if (!value) return { error: "--result requires text." };
+			if (!value) return { error: "--manual-summary requires text." };
 			result = value;
 			mode = "result";
 			continue;
@@ -362,11 +369,11 @@ function parseBranchReturnArgs(args: string): { mode: "summary" | "without_summa
 		return { error: `Unknown /branch-return argument: ${token}` };
 	}
 
-	if (mode === "without_summary" && (focus?.trim() || result?.trim())) {
-		return { error: "--without-summary cannot be combined with --focus or --result." };
-	}
-	if (mode === "result" && !result?.trim()) return { error: "--result requires text." };
-	return { mode, focus: focus?.trim() || undefined, result: result?.trim() || undefined };
+	return {
+		mode: mode ?? "summary",
+		focus: focus?.trim() || undefined,
+		result: result?.trim() || undefined,
+	};
 }
 
 function formatBranchPrompt(prompt: string) {
@@ -559,14 +566,10 @@ const ExcursionStartParams = Type.Object({
 });
 
 const ExcursionReturnParams = Type.Object({
-	mode: Type.Optional(
-		Type.Union(
-			[Type.Literal("summary"), Type.Literal("without_summary"), Type.Literal("result")],
-			{ description: "How to return from the active branch. Use summary by default, without_summary only when nothing needs to be preserved, and result when you can provide the concise final result directly." },
-		),
-	),
-	result: Type.Optional(Type.String({ description: "Concise final result to carry back when mode is result." })),
-	focus: Type.Optional(Type.String({ description: "Optional extra guidance for the return summary." })),
+	auto_summary: Type.Optional(Type.Boolean({ description: "Use the default automatic branch summary return. Use exactly one return-style parameter." })),
+	focused_summary: Type.Optional(Type.String({ description: "Automatic branch summary return with extra focus guidance. Use exactly one return-style parameter." })),
+	without_summary: Type.Optional(Type.Boolean({ description: "Return without preserving branch context. Use exactly one return-style parameter." })),
+	manual_summary: Type.Optional(Type.String({ description: "Manual summary text to carry back instead of generating one automatically. Use exactly one return-style parameter." })),
 });
 
 async function inputBranchPrompt(ctx: ExtensionCommandContext, title: string): Promise<string | undefined> {
@@ -728,14 +731,37 @@ async function showBranchReturnMenu(pi: ExtensionAPI, ctx: ExtensionCommandConte
 		return;
 	}
 
-	const choice = await ctx.ui.select("Branch Return", ["Return with summary", "Return without summary"]);
+	const choice = await ctx.ui.select("Branch Return", [
+		"Auto summary",
+		"Focused summary...",
+		"Manual summary...",
+		"Without summary",
+	]);
 	if (!choice) return;
 
-	if (choice === "Return with summary") {
+	if (choice === "Auto summary") {
 		await returnFromBranch(pi, ctx, false);
 		return;
 	}
-	if (choice === "Return without summary") {
+	if (choice === "Focused summary...") {
+		const focus = await inputBranchPrompt(ctx, "Focused branch summary");
+		if (!focus) {
+			notify(ctx, "/branch-return cancelled: no summary focus entered.", "info");
+			return;
+		}
+		await returnFromBranch(pi, ctx, false, focus);
+		return;
+	}
+	if (choice === "Manual summary...") {
+		const summary = await inputBranchPrompt(ctx, "Manual branch summary");
+		if (!summary) {
+			notify(ctx, "/branch-return cancelled: no manual summary entered.", "info");
+			return;
+		}
+		await returnFromBranch(pi, ctx, false, undefined, summary);
+		return;
+	}
+	if (choice === "Without summary") {
 		await returnFromBranch(pi, ctx, true);
 	}
 }
@@ -841,7 +867,8 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use excursion_return when the active branch exploration is complete and the result should be carried back to the parent branch.",
 			"Call excursion_return when the user asks to return from, end, close, finish, or summarize the active branch.",
-			"Use mode=summary by default. Use mode=without_summary only when the user asked to return without preserving branch context. Use mode=result when you can provide the concise final result directly.",
+			"Use exactly one of these return-style parameters: auto_summary, focused_summary, without_summary, or manual_summary. Do not combine them in the same tool call.",
+			"Use auto_summary for the default generated return summary, focused_summary when the generated summary should emphasize specific points, without_summary only when the user asked to return without preserving branch context, and manual_summary only when you can directly provide the summary text to carry back.",
 			"The user is shown the tool result directly, so do not repeat routine operational details from the tool output unless extra explanation is actually needed.",
 		],
 		parameters: ExcursionReturnParams,
@@ -850,18 +877,28 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 			if (!state) {
 				return { content: [{ type: "text", text: "No active branch found." }], isError: true };
 			}
-			const mode = params.mode ?? "summary";
-			const resultText = mode === "result" ? params.result?.trim() : undefined;
-			if (mode === "result" && !resultText) {
-				return { content: [{ type: "text", text: "mode=result requires a concise result." }], isError: true };
+
+			const selectedModes = [params.auto_summary === true, typeof params.focused_summary === "string", params.without_summary === true, typeof params.manual_summary === "string"].filter(Boolean).length;
+			if (selectedModes > 1) {
+				return { content: [{ type: "text", text: "Use exactly one of auto_summary, focused_summary, without_summary, or manual_summary." }], isError: true };
+			}
+
+			const mode = params.without_summary ? "without_summary" : typeof params.manual_summary === "string" ? "result" : "summary";
+			const focusText = typeof params.focused_summary === "string" ? params.focused_summary.trim() : undefined;
+			const resultText = typeof params.manual_summary === "string" ? params.manual_summary.trim() : undefined;
+			if (typeof params.focused_summary === "string" && !focusText) {
+				return { content: [{ type: "text", text: "focused_summary requires text." }], isError: true };
+			}
+			if (typeof params.manual_summary === "string" && !resultText) {
+				return { content: [{ type: "text", text: "manual_summary requires text." }], isError: true };
 			}
 			if (typeof (ctx as BranchReturnContext).navigateTree !== "function") {
-				const inserted = suggestBranchReturnInEditor(ctx, { mode, focus: params.focus, result: resultText });
-				const command = buildBranchReturnCommand({ mode, focus: params.focus, result: resultText });
+				const inserted = suggestBranchReturnInEditor(ctx, { mode, focus: focusText, result: resultText });
+				const command = buildBranchReturnCommand({ mode, focus: focusText, result: resultText });
 				const text = inserted ? `Inserted ${command} into the editor. Press Enter.` : `Run ${command}.`;
 				return { content: [{ type: "text", text }] };
 			}
-			const result = await returnFromBranch(pi, ctx, mode === "without_summary", params.focus, resultText);
+			const result = await returnFromBranch(pi, ctx, mode === "without_summary", focusText, resultText);
 			if (!result.ok) {
 				return { content: [{ type: "text", text: result.error }], isError: true };
 			}
@@ -873,7 +910,11 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 							? "Branch return was cancelled."
 							: mode === "without_summary"
 								? "Returned from branch without summary."
-								: "Returned from branch with summary.",
+								: mode === "result"
+									? "Returned from branch with manual summary."
+									: focusText
+										? "Returned from branch with focused summary."
+										: "Returned from branch with automatic summary.",
 					},
 				],
 			};
