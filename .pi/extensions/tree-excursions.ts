@@ -546,7 +546,7 @@ function startBranch(
 
 function defaultBranchReturnInstructions(focus?: string) {
 	const base = [
-		"Summarize this temporary branch for returning to the main conversation.",
+		"Summarize this excursion branch for returning to the main conversation.",
 		"Include: objective, key findings, decisions made, files changed or commands run if relevant, unresolved issues, and recommended next step.",
 		"Be concise and preserve only information useful for continuing from the original point.",
 	];
@@ -557,7 +557,7 @@ function defaultBranchReturnInstructions(focus?: string) {
 }
 
 const ExcursionStartParams = Type.Object({
-	prompt: Type.String({ description: "Task prompt to run on a visible temporary session-tree branch." }),
+	prompt: Type.String({ description: "Task prompt to run on a visible excursion branch in the current session tree." }),
 	agent: Type.Optional(
 		Type.String({
 			description:
@@ -638,11 +638,11 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	const agentText = result.agentName ? ` using agent profile ${result.agentName}` : "";
 	if (contextMode === "none") {
 		pendingContextReset = { startEntryId: result.state.startEntryId, firstKeptEntryId: result.contextBaseEntryId };
-		notify(ctx, `Preparing no-context branch from ${result.originId}${agentText}...`, "info");
+		notify(ctx, `Preparing no-context excursion branch${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
 				pi.sendUserMessage(formatBranchPrompt(prompt));
-				notify(ctx, `Started no-context branch from ${result.originId}${agentText}`, "info");
+				notify(ctx, `Started no-context excursion branch${agentText}.`, "info");
 			},
 			onError: (error) => {
 				pendingContextReset = undefined;
@@ -653,11 +653,11 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	}
 
 	if (contextMode === "compacted") {
-		notify(ctx, `Preparing compacted-context branch from ${result.originId}${agentText}...`, "info");
+		notify(ctx, `Preparing compacted-context excursion branch${agentText}...`, "info");
 		ctx.compact({
 			onComplete: () => {
 				pi.sendUserMessage(formatBranchPrompt(prompt));
-				notify(ctx, `Started compacted-context branch from ${result.originId}${agentText}`, "info");
+				notify(ctx, `Started compacted-context excursion branch${agentText}.`, "info");
 			},
 			onError: (error) => {
 				notify(ctx, `Failed to prepare compacted-context branch: ${error.message}`, "error");
@@ -666,7 +666,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 		return;
 	}
 
-	notify(ctx, `Started branch from ${result.originId}${agentText}`, "info");
+	notify(ctx, `Started excursion branch${agentText}.`, "info");
 }
 
 async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forget: boolean, focus?: string, resultText?: string): Promise<{ ok: true; cancelled: boolean } | { ok: false; error: string }> {
@@ -678,7 +678,7 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 
 	if (!ctx.sessionManager.getEntry(state.originId)) {
 		refreshBranchState(pi, ctx);
-		const error = `Stored branch origin ${state.originId} no longer exists.`;
+		const error = "Stored excursion return point no longer exists.";
 		notify(ctx, error, "error");
 		return { ok: false, error };
 	}
@@ -692,10 +692,10 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 	if (typeof ctx.waitForIdle === "function") await ctx.waitForIdle();
 	const manualSummary = resultText?.trim();
 	const returnMessage = forget
-		? `Returning to branch origin ${state.originId} without summary...`
+		? "Returning from excursion branch without summary..."
 		: manualSummary
-			? `Returning to branch origin ${state.originId} with manual summary...`
-			: `Returning to branch origin ${state.originId} with branch summary...`;
+			? "Returning from excursion branch with manual summary..."
+			: "Returning from excursion branch with summary...";
 	if (forget || !ctx.hasUI) notify(ctx, returnMessage, "info");
 
 	const oldLeafId = ctx.sessionManager.getLeafId();
@@ -866,7 +866,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 		name: "excursion_start",
 		label: "Excursion Start",
 		description: [
-			"Start a visible temporary branch task in the current Pi session tree.",
+			"Start a visible excursion branch task in the current Pi session tree.",
 			"Use when a subagent-style investigation is helpful but true parallel subprocess isolation is not required.",
 			"This queues the branch task; the user must later run /branch-return to summarize the branch and return to the origin.",
 			"Nested branches are allowed; the closest branch start on the current session path determines active branch behavior.",
@@ -899,7 +899,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Started branch from ${result.originId}${agentText}. The branch task has been queued; run /branch-return when ready to summarize and return.`,
+						text: `Started excursion branch${agentText}. The branch task has been queued; run /branch-return when ready to summarize and return.`,
 					},
 				],
 			};
@@ -969,7 +969,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("branch", {
-		description: "Start a visible session-tree branch",
+		description: "Start a visible excursion branch",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 			if (args.trim()) {
@@ -981,7 +981,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("branch-return", {
-		description: "Return from the nearest active session-tree branch",
+		description: "Return from the nearest active excursion branch",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (isSubagentProcess()) return;
 			const parsed = parseBranchReturnArgs(args);
