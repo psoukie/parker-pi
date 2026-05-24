@@ -8,7 +8,6 @@ const EXCURSION_HEAD_TYPE = "excursion-head";
 const EXCURSION_START_TYPE = "excursion-start";
 const EXCURSION_END_TYPE = "excursion-end";
 const WIDGET_ID = "branch";
-const RETURN_LABEL = "branch-return";
 const RETURN_TOOL_NAME = "excursion_return";
 const NO_CONTEXT_SUMMARY = "This excursion branch intentionally starts with no prior conversation history. The next user message defines the excursion task.";
 const EXCURSION_START_MESSAGE = "This is the start of an excursion branch.";
@@ -705,7 +704,6 @@ async function returnFromBranch(pi: ExtensionAPI, ctx: BranchReturnContext, forg
 				: {
 						summarize: true,
 						customInstructions: manualSummary ? undefined : defaultBranchReturnInstructions(focus),
-						label: RETURN_LABEL,
 					},
 		);
 
@@ -804,7 +802,6 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 					timestamp: new Date().toISOString(),
 				},
 			},
-			label: RETURN_LABEL,
 		};
 	});
 
