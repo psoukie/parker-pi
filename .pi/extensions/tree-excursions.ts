@@ -421,7 +421,7 @@ function getNextContextMode(contextMode: BranchContextMode, direction = 1): Bran
 }
 
 async function selectBranchStartOptions(ctx: ExtensionCommandContext): Promise<BranchStartSelection | null> {
-	const discovery = discoverAgents(ctx.cwd, "project");
+	const discovery = discoverAgents(ctx.cwd, "both");
 	let contextMode: BranchContextMode = "full";
 	const noneValue = "__none__";
 	const items: SelectItem[] = [
@@ -512,7 +512,7 @@ function resolveAgent(ctx: ExtensionContext, agentName: string | undefined, agen
 
 function getStateAgent(ctx: ExtensionContext, state: BranchState): AgentConfig | undefined {
 	if (!state.agentName) return undefined;
-	return discoverAgents(ctx.cwd, "project").agents.find((agent) => agent.name === state.agentName);
+	return discoverAgents(ctx.cwd, "both").agents.find((agent) => agent.name === state.agentName);
 }
 
 function startBranch(
@@ -528,7 +528,7 @@ function startBranch(
 		return { ok: false, error: "Cannot start a branch before the session has a tree entry." };
 	}
 
-	const agentScope = options?.agentScope ?? "project";
+	const agentScope = options?.agentScope ?? "both";
 	const resolved = resolveAgent(ctx, options?.agentName, agentScope);
 	if (resolved.error) return { ok: false, error: resolved.error };
 
@@ -561,7 +561,7 @@ const ExcursionStartParams = Type.Object({
 	agent: Type.Optional(
 		Type.String({
 			description:
-				"Optional project-local agent profile name from .pi/agents, e.g. william or worker. The profile description and instructions are injected into the branch system prompt; no subprocess is spawned.",
+				"Optional agent profile name from either user agents or trusted project-local .pi/agents, e.g. william or worker. The profile description and instructions are injected into the branch system prompt; no subprocess is spawned.",
 		}),
 	),
 });
@@ -629,7 +629,7 @@ async function startBranchFromMenu(pi: ExtensionAPI, ctx: ExtensionCommandContex
 	}
 
 	const contextMode = selection.contextMode;
-	const result = startBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "project", contextMode, deferPrompt: contextMode !== "full" });
+	const result = startBranch(pi, ctx, prompt, { agentName: selection.agentName, agentScope: "both", contextMode, deferPrompt: contextMode !== "full" });
 	if (!result.ok) {
 		notify(ctx, result.error, "warning");
 		return;
@@ -870,7 +870,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 			"Use when a subagent-style investigation is helpful but true parallel subprocess isolation is not required.",
 			"This queues the branch task; the user must later run /branch-return to summarize the branch and return to the origin.",
 			"Nested branches are allowed; the closest branch start on the current session path determines active branch behavior.",
-			"Optionally provide a project-local agent profile name from .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
+			"Optionally provide an agent profile name from either user agents or trusted project-local .pi/agents to inject that agent's description and instructions into the branch system prompt without spawning a subprocess.",
 		].join(" "),
 		promptSnippet: "excursion_start: start a branch task; user later runs /branch-return to summarize and return.",
 		promptGuidelines: [
@@ -887,7 +887,7 @@ export default function treeExcursionsExtension(pi: ExtensionAPI) {
 
 			const result = startBranch(pi, ctx, prompt, {
 				agentName: params.agent,
-				agentScope: "project",
+				agentScope: "both",
 				deliverAs: ctx.isIdle() ? undefined : "followUp",
 			});
 			if (!result.ok) {
