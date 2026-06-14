@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -21,6 +23,7 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Formats: bedtime and wake use 24-hour HH:MM; drinks use decimal units like 1.5 or 3.5; "
             "boolean flags accept 1/0, yes/no, true/false, or y/n; fitness-other and notes are free text (e.g. `Pilates`). "
+            "Canonical storage leaves drinks at 0 and false activity booleans blank rather than writing explicit 0/no. "
             "Only provided fields are updated; all others for that date are preserved. "
             "After a successful write, the dashboard is redrawn automatically."
         ),
@@ -60,6 +63,8 @@ def _normalized_drinks(value: str | None) -> str | None:
     if value is None:
         return None
     parsed = float(value)
+    if parsed == 0:
+        return ""
     return format(parsed, "g")
 
 
@@ -67,9 +72,9 @@ def _normalized_bool(value: str | None) -> str | None:
     if value is None:
         return None
     parsed = _optional_bool(value)
-    if parsed is None:
-        return None
-    return "yes" if parsed else "no"
+    if parsed is None or parsed is False:
+        return ""
+    return "yes"
 
 
 def validate_and_normalize_args(args: argparse.Namespace) -> dict[str, str | None]:
@@ -94,45 +99,60 @@ def validate_and_normalize_args(args: argparse.Namespace) -> dict[str, str | Non
     return normalized_updates
 
 
+@contextmanager
+def exclusive_metrics_lock(data_path: Path):
+    """Serialize read/modify/write/render cycles for the metrics CSV."""
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = data_path.with_suffix(data_path.suffix + ".lock")
+    with lock_path.open("w", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def main() -> None:
     args = parse_args()
     updates = validate_and_normalize_args(args)
     path = Path(args.data)
-    ensure_daily_metrics_csv(path)
 
-    with path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
+    with exclusive_metrics_lock(path):
+        ensure_daily_metrics_csv(path)
 
-    row = next((existing for existing in rows if existing["date"] == args.date), None)
-    if row is None:
-        row = {field: "" for field in CSV_FIELDS}
-        row["date"] = args.date
-        rows.append(row)
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
 
-    if not any(value is not None for value in updates.values()):
-        raise SystemExit("No updates provided.")
+        row = next((existing for existing in rows if existing["date"] == args.date), None)
+        if row is None:
+            row = {field: "" for field in CSV_FIELDS}
+            row["date"] = args.date
+            rows.append(row)
 
-    for field, value in updates.items():
-        if value is not None:
-            row[field] = str(value)
+        if not any(value is not None for value in updates.values()):
+            raise SystemExit("No updates provided.")
 
-    rows.sort(key=lambda item: item["date"])
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+        for field, value in updates.items():
+            if value is not None:
+                row[field] = str(value)
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT_DIR / "render-sleep-dashboard.py"),
-            "--data",
-            str(path),
-            "--output",
-            args.render_output,
-        ],
-        check=True,
-    )
+        rows.sort(key=lambda item: item["date"])
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "render-sleep-dashboard.py"),
+                "--data",
+                str(path),
+                "--output",
+                args.render_output,
+            ],
+            check=True,
+        )
 
     print(path)
 

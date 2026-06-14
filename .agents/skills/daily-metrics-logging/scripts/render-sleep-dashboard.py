@@ -325,6 +325,13 @@ def render_html(payload: dict) -> str:
       font-size: 12px;
       margin-top: 2px;
     }}
+    .stat small {{
+      display: block;
+      margin-top: 5px;
+      font: 700 12px/1.1 ui-sans-serif, system-ui, sans-serif;
+      color: inherit;
+      opacity: .88;
+    }}
     .stat-sleep, .stat-bed {{
       background: rgba(219, 234, 254, .76);
       border-color: rgba(147, 197, 253, .48);
@@ -531,6 +538,47 @@ def render_html(payload: dict) -> str:
     }};
     const fmtBedtime = value => fmtClockMinutes(Math.round((value < 0 ? value + 24 : value) * 60), true);
     const fmtClockLabel = value => fmtClockMinutes(Math.round((value < 0 ? value + 24 : value) * 60));
+    const roundedSleepMinutes = value => (value == null ? null : Math.round(value * 60));
+    const roundedBedtimeFoldedMinutes = value => (value == null ? null : Math.round(value * 60));
+    const roundedDrinksTenths = value => (value == null ? null : Math.round(value * 10));
+    const roundedPercentPoints = value => (value == null ? null : Math.round(value * 100));
+    const fmtDurationMinutes = minutes => {{
+      if (minutes == null) return "n/a";
+      const absolute = Math.abs(minutes);
+      const hours = Math.floor(absolute / 60);
+      const mins = absolute % 60;
+      return `${{hours}}:${{String(mins).padStart(2, "0")}}`;
+    }};
+    const fmtDrinksTenths = tenths => (tenths == null ? "n/a" : (tenths / 10).toFixed(1));
+    const diffText = (delta, kind) => {{
+      if (delta == null || delta === 0) return "=";
+      const arrow = delta > 0 ? "↑" : "↓";
+      const magnitude = Math.abs(delta);
+      if (kind === "time") return `${{arrow}} ${{fmtDurationMinutes(magnitude)}}`;
+      if (kind === "drinks") return `${{arrow}} ${{fmtDrinksTenths(magnitude)}}`;
+      return `${{arrow}} ${{magnitude}}pt`;
+    }};
+    const average = values => {{
+      const present = values.filter(value => value != null);
+      return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
+    }};
+    const averagesForRows = data => ({{
+      sleep: average(data.map(row => row.sleepHours)),
+      bedtime: average(data.filter(row => row.sleepHours != null).map(row => row.bedtimeHour)),
+      drinks: average(data.map(row => row.drinks)),
+      zazen: average(data.map(row => row.zazenValue)),
+      routines: average(data.map(row => row.routineValue)),
+      fitness: average(data.map(row => row.fitnessValue)),
+    }});
+    const previousRowsForRange = (allRows, currentRows) => {{
+      if (!currentRows.length) return [];
+      const start = currentRows[0].dateObj;
+      const end = currentRows[currentRows.length - 1].dateObj;
+      const calendarDays = Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1;
+      const previousEnd = addDays(start, -1);
+      const previousStart = addDays(previousEnd, -(calendarDays - 1));
+      return allRows.filter(row => row.dateObj >= previousStart && row.dateObj <= previousEnd);
+    }};
     const rows = payload.s
       ? payload.o.map((offset, index) => {{
           const dateObj = addDays(parseDate(payload.s), offset);
@@ -741,37 +789,47 @@ def render_html(payload: dict) -> str:
       const yPercentRoutines = makeScale(0, 1, chartSpecs[4].top + chartSpecs[4].height, chartSpecs[4].top);
       const yPercentFitness = makeScale(0, 1, chartSpecs[5].top + chartSpecs[5].height, chartSpecs[5].top);
 
-      const sleepRows = data.filter(row => row.sleepHours != null);
-      const avgSleep = sleepRows.length
-        ? sleepRows.reduce((sum, row) => sum + row.sleepHours, 0) / sleepRows.length
-        : null;
-      const avgBed = sleepRows.length
-        ? sleepRows.reduce((sum, row) => sum + row.bedtimeHour, 0) / sleepRows.length
-        : null;
-      const drinksRows = data.filter(row => row.drinks != null);
-      const avgDrinks = drinksRows.length
-        ? drinksRows.reduce((sum, row) => sum + row.drinks, 0) / drinksRows.length
-        : null;
-      const zazenRows = data.filter(row => row.zazenValue != null);
-      const avgZazen = zazenRows.length
-        ? zazenRows.reduce((sum, row) => sum + row.zazenValue, 0) / zazenRows.length
-        : null;
-      const routineRows = data.filter(row => row.routineValue != null);
-      const avgRoutine = routineRows.length
-        ? routineRows.reduce((sum, row) => sum + row.routineValue, 0) / routineRows.length
-        : null;
-      const fitnessRows = data.filter(row => row.fitnessValue != null);
-      const avgFitness = fitnessRows.length
-        ? fitnessRows.reduce((sum, row) => sum + row.fitnessValue, 0) / fitnessRows.length
-        : null;
+      const averages = averagesForRows(data);
+      const previousRows = previousRowsForRange(allRows, data);
+      const previousAverages = averagesForRows(previousRows);
+      const avgSleep = averages.sleep;
+      const avgBed = averages.bedtime;
+      const avgDrinks = averages.drinks;
+      const avgZazen = averages.zazen;
+      const avgRoutine = averages.routines;
+      const avgFitness = averages.fitness;
+      const sleepDiff = diffText(
+        avgSleep == null || previousAverages.sleep == null ? null : roundedSleepMinutes(avgSleep) - roundedSleepMinutes(previousAverages.sleep),
+        "time"
+      );
+      const bedDiff = diffText(
+        avgBed == null || previousAverages.bedtime == null ? null : roundedBedtimeFoldedMinutes(avgBed) - roundedBedtimeFoldedMinutes(previousAverages.bedtime),
+        "time"
+      );
+      const drinksDiff = diffText(
+        avgDrinks == null || previousAverages.drinks == null ? null : roundedDrinksTenths(avgDrinks) - roundedDrinksTenths(previousAverages.drinks),
+        "drinks"
+      );
+      const zazenDiff = diffText(
+        avgZazen == null || previousAverages.zazen == null ? null : roundedPercentPoints(avgZazen) - roundedPercentPoints(previousAverages.zazen),
+        "percent"
+      );
+      const routineDiff = diffText(
+        avgRoutine == null || previousAverages.routines == null ? null : roundedPercentPoints(avgRoutine) - roundedPercentPoints(previousAverages.routines),
+        "percent"
+      );
+      const fitnessDiff = diffText(
+        avgFitness == null || previousAverages.fitness == null ? null : roundedPercentPoints(avgFitness) - roundedPercentPoints(previousAverages.fitness),
+        "percent"
+      );
       stats.innerHTML = `
-        <div class="stat stat-sleep"><b>${{avgSleep == null ? "n/a" : fmtHours(avgSleep)}}</b><span>Avg sleep</span></div>
-        <div class="stat stat-bed"><b>${{avgBed == null ? "n/a" : fmtBedtime(avgBed)}}</b><span>Avg bedtime</span></div>
-        <div class="stat stat-drinks"><b>${{avgDrinks == null ? "n/a" : avgDrinks.toFixed(1).replace(/\\.0$/, "")}}</b><span>Avg drinks</span></div>
-        <div class="stat stat-zazen"><b>${{avgZazen == null ? "n/a" : fmtPercent(avgZazen)}}</b><span>Zazen</span></div>
-        <div class="stat stat-routines"><b>${{avgRoutine == null ? "n/a" : fmtPercent(avgRoutine)}}</b><span>Routines</span></div>
-        <div class="stat stat-fitness"><b>${{avgFitness == null ? "n/a" : fmtPercent(avgFitness)}}</b><span>Fitness</span></div>
-        <div class="stat stat-range"><b>${{fmtDate(start)}}-${{fmtDate(end)}}</b><span>Range</span></div>
+        <div class="stat stat-sleep"><b>${{avgSleep == null ? "n/a" : fmtHours(avgSleep)}}</b><small>${{sleepDiff}}</small><span>Avg sleep</span></div>
+        <div class="stat stat-bed"><b>${{avgBed == null ? "n/a" : fmtBedtime(avgBed)}}</b><small>${{bedDiff}}</small><span>Avg bedtime</span></div>
+        <div class="stat stat-drinks"><b>${{avgDrinks == null ? "n/a" : avgDrinks.toFixed(1).replace(/\\.0$/, "")}}</b><small>${{drinksDiff}}</small><span>Avg drinks</span></div>
+        <div class="stat stat-zazen"><b>${{avgZazen == null ? "n/a" : fmtPercent(avgZazen)}}</b><small>${{zazenDiff}}</small><span>Zazen</span></div>
+        <div class="stat stat-routines"><b>${{avgRoutine == null ? "n/a" : fmtPercent(avgRoutine)}}</b><small>${{routineDiff}}</small><span>Routines</span></div>
+        <div class="stat stat-fitness"><b>${{avgFitness == null ? "n/a" : fmtPercent(avgFitness)}}</b><small>${{fitnessDiff}}</small><span>Fitness</span></div>
+        <div class="stat stat-range"><b>${{fmtDate(start)}}-${{fmtDate(end)}}</b><small>${{previousRows.length ? `vs ${{fmtDate(previousRows[0].dateObj)}}-${{fmtDate(previousRows[previousRows.length - 1].dateObj)}}` : "n/a"}}</small><span>Range</span></div>
       `;
 
       data.forEach((d, index) => {{
