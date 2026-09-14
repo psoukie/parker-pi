@@ -176,7 +176,11 @@ async function statusTimer(): Promise<string> {
   const active = await currentEntry(config);
   if (!active) return "No Toggl timer is currently running.";
   const elapsed = Math.floor((Date.now() - Date.parse(active.start)) / 1000);
-  return `Running${active.description ? `: ${active.description}` : ""} (${formatDuration(elapsed)}).`;
+  const project = active.project_id == null
+    ? undefined
+    : (await listProjects(config)).find((candidate) => candidate.id === active.project_id);
+  const projectName = project?.name ?? "Unknown project";
+  return `${projectName} running (${formatDuration(elapsed)}).`;
 }
 
 async function projectsStatus(): Promise<string> {
