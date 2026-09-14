@@ -58,13 +58,11 @@ def _historical_routine_score(
 
 
 def _historical_fitness_score(
-    fitness_walk: bool | None,
-    fitness_run: bool | None,
-    fitness_other: str,
+    fitness: str,
     index: int,
     last_index: int,
 ) -> float | None:
-    value = fitness_score(fitness_walk, fitness_run, fitness_other)
+    value = fitness_score(fitness)
     if value is None and index < last_index:
         return 0.0
     return value
@@ -111,7 +109,7 @@ def _tenths_value(value: float | None) -> int | None:
 def dashboard_payload(data_path: Path, fast_alpha: float, slow_alpha: float) -> dict:
     entries = read_daily_metrics_csv(data_path)
     if not entries:
-        return {"s": "", "o": [], "bt": [], "wk": [], "sl": [], "as": [], "cs": [], "ab": [], "cb": [], "dr": [], "ad": [], "cd": [], "mr": [], "er": [], "rv": [], "ar": [], "cr": [], "zz": [], "zv": [], "az": [], "cz": [], "fw": [], "fr": [], "fo": [], "fv": [], "af": [], "cf": []}
+        return {"s": "", "o": [], "bt": [], "wk": [], "sl": [], "as": [], "cs": [], "ab": [], "cb": [], "dr": [], "ad": [], "cd": [], "mr": [], "er": [], "rv": [], "ar": [], "cr": [], "zz": [], "zv": [], "az": [], "cz": [], "ft": [], "fv": [], "af": [], "cf": []}
 
     last_index = len(entries) - 1
     sleep_values = [entry.sleep_hours for entry in entries]
@@ -123,7 +121,7 @@ def dashboard_payload(data_path: Path, fast_alpha: float, slow_alpha: float) -> 
         for index, entry in enumerate(entries)
     ]
     fitness_values = [
-        _historical_fitness_score(entry.fitness_walk, entry.fitness_run, entry.fitness_other, index, last_index)
+        _historical_fitness_score(entry.fitness, index, last_index)
         for index, entry in enumerate(entries)
     ]
 
@@ -163,9 +161,7 @@ def dashboard_payload(data_path: Path, fast_alpha: float, slow_alpha: float) -> 
         "zv": [_percent_value(value) for value in zazen_values],
         "az": [_percent_value(value) for value in acute_zazen],
         "cz": [_percent_value(value) for value in chronic_zazen],
-        "fw": [_bool_flag(entry.fitness_walk) for entry in entries],
-        "fr": [_bool_flag(entry.fitness_run) for entry in entries],
-        "fo": [entry.fitness_other for entry in entries],
+        "ft": [entry.fitness for entry in entries],
         "fv": [_percent_value(value) for value in fitness_values],
         "af": [_percent_value(value) for value in acute_fitness],
         "cf": [_percent_value(value) for value in chronic_fitness],
@@ -610,9 +606,7 @@ def render_html(payload: dict) -> str:
             zazenValue: decodePercent(payload.zv[index]),
             acuteZazen: decodePercent(payload.az[index]),
             chronicZazen: decodePercent(payload.cz[index]),
-            fitnessWalk: decodeBool(payload.fw[index]),
-            fitnessRun: decodeBool(payload.fr[index]),
-            fitnessOther: payload.fo[index],
+            fitnessText: payload.ft[index],
             fitnessValue: decodePercent(payload.fv[index]),
             acuteFitness: decodePercent(payload.af[index]),
             chronicFitness: decodePercent(payload.cf[index]),
@@ -871,14 +865,8 @@ def render_html(payload: dict) -> str:
         if (d.eveningRoutine === true) {{
           svgParts.push(`<rect x="${{x(d) - barWidth / 2}}" y="${{yPercentRoutines(1)}}" width="${{barWidth}}" height="${{yPercentRoutines(0.5) - yPercentRoutines(1)}}" fill="var(--gray-bar)" opacity=".82"/>`);
         }}
-        if (d.fitnessWalk === true) {{
-          svgParts.push(`<rect x="${{x(d) - barWidth / 2}}" y="${{yPercentFitness(1 / 3)}}" width="${{barWidth}}" height="${{yPercentFitness(0) - yPercentFitness(1 / 3)}}" fill="var(--red-bar)" opacity=".84"/>`);
-        }}
-        if (d.fitnessRun === true) {{
-          svgParts.push(`<rect x="${{x(d) - barWidth / 2}}" y="${{yPercentFitness(2 / 3)}}" width="${{barWidth}}" height="${{yPercentFitness(1 / 3) - yPercentFitness(2 / 3)}}" fill="var(--red-bar)" opacity=".84"/>`);
-        }}
-        if (d.fitnessOther) {{
-          svgParts.push(`<rect x="${{x(d) - barWidth / 2}}" y="${{yPercentFitness(1)}}" width="${{barWidth}}" height="${{yPercentFitness(2 / 3) - yPercentFitness(1)}}" fill="var(--red-bar)" opacity=".84"/>`);
+        if (d.fitnessText) {{
+          svgParts.push(`<rect x="${{x(d) - barWidth / 2}}" y="${{yPercentFitness(1)}}" width="${{barWidth}}" height="${{yPercentFitness(0) - yPercentFitness(1)}}" fill="var(--red-bar)" opacity=".84"/>`);
         }}
       }});
 
@@ -887,7 +875,7 @@ def render_html(payload: dict) -> str:
       const drinksGrid = Array.from({{ length: drinksCeil / 2 + 1 }}, (_, index) => index * 2);
       const zazenGrid = [0, 1];
       const routinesGrid = [0, 0.5, 1];
-      const fitnessGrid = [0, 1 / 3, 2 / 3, 1];
+      const fitnessGrid = [0, 1];
 
       sleepGrid.forEach(value => {{
         svgParts.push(`<line class="grid" x1="${{margin.left}}" x2="${{plotRight}}" y1="${{ySleep(value)}}" y2="${{ySleep(value)}}"/>`);
@@ -933,9 +921,7 @@ def render_html(payload: dict) -> str:
       svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentZazen(0.5) + 5}}" text-anchor="end">Sit</text>`);
       svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentRoutines(0.75) + 5}}" text-anchor="end">Evening</text>`);
       svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentRoutines(0.25) + 5}}" text-anchor="end">Morning</text>`);
-      svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentFitness(5 / 6) + 5}}" text-anchor="end">Other</text>`);
-      svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentFitness(0.5) + 5}}" text-anchor="end">Run</text>`);
-      svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentFitness(1 / 6) + 5}}" text-anchor="end">Walk</text>`);
+      svgParts.push(`<text class="axis" x="${{margin.left - 18}}" y="${{yPercentFitness(0.5) + 5}}" text-anchor="end">Done</text>`);
 
       for (let i = 0; i < data.length - 1; i += 1) {{
         const left = data[i];
@@ -1123,15 +1109,9 @@ def render_html(payload: dict) -> str:
         if (d.eveningRoutine === true) {{
           markup += habitSegmentLabel(focusX, (yPercentRoutines(0.5) + yPercentRoutines(1)) / 2, "Evening", "var(--gray-dark)");
         }}
-        if (d.fitnessWalk === true) {{
-          markup += habitSegmentLabel(focusX, (yPercentFitness(0) + yPercentFitness(1 / 3)) / 2, "Walk", "var(--red-dark)");
-        }}
-        if (d.fitnessRun === true) {{
-          markup += habitSegmentLabel(focusX, (yPercentFitness(1 / 3) + yPercentFitness(2 / 3)) / 2, "Run", "var(--red-dark)");
-        }}
-        if (d.fitnessOther) {{
-          const otherText = d.fitnessOther.length > 14 ? d.fitnessOther.slice(0, 14) + "..." : d.fitnessOther;
-          markup += habitSegmentLabel(focusX, (yPercentFitness(2 / 3) + yPercentFitness(1)) / 2, otherText, "var(--red-dark)");
+        if (d.fitnessText) {{
+          const fitnessText = d.fitnessText.length > 18 ? d.fitnessText.slice(0, 18) + "..." : d.fitnessText;
+          markup += habitSegmentLabel(focusX, yPercentFitness(0.5), fitnessText, "var(--red-dark)");
         }}
 
         [sleepValues, bedtimeValues, drinkValues, zazenValues, routineValues, fitnessValues].forEach((seriesGroup, groupIndex) => {{

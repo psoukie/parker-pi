@@ -14,9 +14,7 @@ CSV_FIELDS = [
     "morning_routine",
     "evening_routine",
     "zazen",
-    "fitness_walk",
-    "fitness_run",
-    "fitness_other",
+    "fitness",
     "notes",
 ]
 
@@ -31,9 +29,7 @@ class DailyMetricsEntry:
     morning_routine: bool | None = None
     evening_routine: bool | None = None
     zazen: bool | None = None
-    fitness_walk: bool | None = None
-    fitness_run: bool | None = None
-    fitness_other: str = ""
+    fitness: str = ""
     notes: str = ""
 
     @property
@@ -130,17 +126,8 @@ def routine_score(morning_routine: bool | None, evening_routine: bool | None) ->
     return total
 
 
-def fitness_score(
-    fitness_walk: bool | None,
-    fitness_run: bool | None,
-    fitness_other: str,
-) -> float | None:
-    other = fitness_other.strip()
-    if fitness_walk is None and fitness_run is None and not other:
-        return None
-    if fitness_walk or fitness_run or other:
-        return 1.0
-    return 0.0
+def fitness_score(fitness: str) -> float | None:
+    return 1.0 if fitness.strip() else None
 
 
 def _optional_float(value: str) -> float | None:
@@ -190,9 +177,7 @@ def read_daily_metrics_csv(path: Path) -> list[DailyMetricsEntry]:
                     morning_routine=_optional_bool(row.get("morning_routine", "")),
                     evening_routine=_optional_bool(row.get("evening_routine", "")),
                     zazen=_optional_bool(row.get("zazen", "")),
-                    fitness_walk=_optional_bool(row.get("fitness_walk", "")),
-                    fitness_run=_optional_bool(row.get("fitness_run", "")),
-                    fitness_other=_optional_text(row.get("fitness_other", "")),
+                    fitness=_optional_text(row.get("fitness", "")),
                     notes=row.get("notes", ""),
                 )
             )

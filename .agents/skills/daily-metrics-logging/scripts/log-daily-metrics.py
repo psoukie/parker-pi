@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
         description="Insert or update one Parker daily metrics row.",
         epilog=(
             "Formats: bedtime and wake use 24-hour HH:MM; drinks use decimal units like 1.5 or 3.5; "
-            "boolean flags accept 1/0, yes/no, true/false, or y/n; fitness-other and notes are free text (e.g. `Pilates`). "
+            "boolean flags accept 1/0, yes/no, true/false, or y/n; fitness and notes are free text (e.g. `walk`, `run`, or `Pilates`). "
             "Canonical storage leaves drinks at 0 and false activity booleans blank rather than writing explicit 0/no. "
             "Only provided fields are updated; all others for that date are preserved. "
             "After a successful write, the dashboard is redrawn automatically."
@@ -35,9 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--morning-routine", help="Boolean: 1/0, yes/no, true/false, or y/n.")
     parser.add_argument("--evening-routine", help="Boolean: 1/0, yes/no, true/false, or y/n.")
     parser.add_argument("--zazen", help="Boolean: 1/0, yes/no, true/false, or y/n.")
-    parser.add_argument("--fitness-walk", help="Boolean: 1/0, yes/no, true/false, or y/n.")
-    parser.add_argument("--fitness-run", help="Boolean: 1/0, yes/no, true/false, or y/n.")
-    parser.add_argument("--fitness-other", help="Free text label for other activity, for example 'Pilates' or 'yard work'.")
+    parser.add_argument("--fitness", help="Free text summary of activity, for example 'walk', 'run', 'Pilates', or 'walk; yard work'.")
     parser.add_argument("--notes", help="Free text note for the date.")
     parser.add_argument(
         "--data",
@@ -77,6 +75,12 @@ def _normalized_bool(value: str | None) -> str | None:
     return "yes"
 
 
+def _normalized_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip()
+
+
 def validate_and_normalize_args(args: argparse.Namespace) -> dict[str, str | None]:
     try:
         normalized_date = date.fromisoformat(args.date).isoformat()
@@ -87,9 +91,7 @@ def validate_and_normalize_args(args: argparse.Namespace) -> dict[str, str | Non
             "morning_routine": _normalized_bool(args.morning_routine),
             "evening_routine": _normalized_bool(args.evening_routine),
             "zazen": _normalized_bool(args.zazen),
-            "fitness_walk": _normalized_bool(args.fitness_walk),
-            "fitness_run": _normalized_bool(args.fitness_run),
-            "fitness_other": args.fitness_other,
+            "fitness": _normalized_text(args.fitness),
             "notes": args.notes,
         }
     except ValueError as exc:

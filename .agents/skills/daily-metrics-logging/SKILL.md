@@ -10,7 +10,7 @@ Daily Metrics Logging is Parker's canonical workflow for recording private heart
 ## Operating Contract
 
 - During normal logging or summary lookup, Parker should not open, inspect, or summarize the private metrics CSV directly. Use the command interface instead.
-- Canonical storage leaves drinks at `0` and false activity booleans (routines, zazen, fitness flags) blank rather than writing explicit `0`/`no` values.
+- Canonical storage leaves drinks at `0` and false activity booleans (routines and zazen) blank rather than writing explicit `0`/`no` values. Fitness is stored as a single free-text `fitness` field.
 - Use this skill for recording or correcting data values for a date, redrawing the dashboard, or retrieving summary stats for review/planning conversations; not for changing dashboard code, formulas, or storage design.
 - Treat unspecified fields as "leave unchanged." Do not clear an existing field unless Pavel explicitly asks to blank it out.
 - A normal metrics write refreshes the dashboard automatically.
@@ -81,16 +81,14 @@ The weekly review heartbeat command returns the preformatted Markdown fenced tex
 - `--morning-routine BOOL`
 - `--evening-routine BOOL`
 - `--zazen BOOL`
-- `--fitness-walk BOOL`
-- `--fitness-run BOOL`
   Accepted boolean values:
   `1`, `0`, `yes`, `no`, `true`, `false`, `y`, `n`
   Canonical storage keeps false values blank and stores only positive activity as explicit `yes`.
 
-- `--fitness-other TEXT`
-  Free text for other activity.
-  Examples: `Pilates`, `yard work`, `walk`
-  Any non-empty text counts as an "other" fitness activity in the dashboard.
+- `--fitness TEXT`
+  Free text for the day's fitness activity.
+  Examples: `walk`, `run`, `Pilates`, `yard work`, `walk; yard work`
+  Any non-empty value counts as fitness activity in the dashboard.
 
 - `--notes TEXT`
   Free text note for that date.
@@ -112,7 +110,7 @@ Add drinks and zazen later without disturbing sleep:
 Record routines and fitness:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --morning-routine yes --evening-routine no --fitness-walk yes --fitness-other "yard work"
+.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --morning-routine yes --evening-routine no --fitness "walk; yard work"
 ```
 
 Redraw only:
@@ -157,7 +155,7 @@ Custom range summary:
 
 1. Determine the target date. If Pavel says "yesterday" or similar, resolve it before calling the command. If Pavel describes sleep as "slept from ... to ...", "I slept ...", or similar and says "last night" or gives no explicit date, log the sleep against yesterday's date, because the row represents the date the sleep began.
 2. Translate the shared facts into command flags using the formats above.
-3. Include only the fields Pavel actually provided or corrected. Do not infer or write `no` for omitted activity-style boolean fields (routines, zazen, fitness); omission means leave the stored value unchanged.
+3. Include only the fields Pavel actually provided or corrected. Do not infer or write `no` for omitted activity-style boolean fields (routines and zazen), and do not invent a fitness value; omission means leave the stored value unchanged.
 4. Run `.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py` once per date, sequentially. Do not use parallel tool calls for multiple writes to the metrics CSV.
 5. Confirm what was recorded in natural language without dumping the private store.
 6. If the task is redraw-only, run `.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.

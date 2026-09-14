@@ -38,14 +38,8 @@ def _historical_routine_score(
     return routine_score(morning_routine, evening_routine)
 
 
-def _historical_fitness_score(
-    fitness_walk: bool | None,
-    fitness_run: bool | None,
-    fitness_other: str,
-    index: int,
-    last_index: int,
-) -> float | None:
-    value = fitness_score(fitness_walk, fitness_run, fitness_other)
+def _historical_fitness_score(fitness: str, index: int, last_index: int) -> float | None:
+    value = fitness_score(fitness)
     if value is None and index < last_index:
         return 0.0
     return value
@@ -64,7 +58,7 @@ def rows_with_dashboard_values(data_path: Path) -> list[dict]:
                 "drinks": _historical_value(entry.drinks, index, last_index),
                 "zazen_value": _historical_bool_score(entry.zazen, index, last_index),
                 "routine_value": _historical_routine_score(entry.morning_routine, entry.evening_routine, index, last_index),
-                "fitness_value": _historical_fitness_score(entry.fitness_walk, entry.fitness_run, entry.fitness_other, index, last_index),
+                "fitness_value": _historical_fitness_score(entry.fitness, index, last_index),
             }
         )
     return rows

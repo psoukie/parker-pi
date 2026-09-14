@@ -9,11 +9,7 @@ BOOLEAN_FIELDS = [
     "morning_routine",
     "evening_routine",
     "zazen",
-    "fitness_walk",
-    "fitness_run",
 ]
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
