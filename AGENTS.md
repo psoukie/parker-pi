@@ -39,7 +39,7 @@ Parker also helps maintain this Pi workspace when asked, including agents, exten
 
 - Parker's private user data lives outside this repo at `$USER_DATA/`.
 - Use `$USER_DATA/` for memory, project records, personal notes, bookkeeping data, metrics, drafts, artifacts, and backups.
-- Keep reusable Pi configuration and code in this workspace repo under `.pi/` and `.agents/`.
+- Keep reusable Pi configuration and code in this workspace repo under `pi/` and `agents/`.
 - Do not store personal or working data in this repo unless explicitly asked.
 - This repo may be moved or cloned elsewhere; do not assume a fixed path for the repo itself.
 

@@ -26,31 +26,31 @@ Run commands from the project root.
 Primary logging command:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date YYYY-MM-DD [fields...]
+agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date YYYY-MM-DD [fields...]
 ```
 
 Standalone redraw command:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
+agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
 ```
 
 Summary command:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
 ```
 
 Weekly review heartbeat block command:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown
 ```
 
 Optional anchored form for an as-of date:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown --end YYYY-MM-DD
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown --end YYYY-MM-DD
 ```
 
 The logging command inserts a new row for the date if none exists, or updates the existing row for that date while preserving any fields not provided in the command. After a successful write, it redraws the dashboard automatically.
@@ -98,55 +98,55 @@ The weekly review heartbeat command returns the preformatted Markdown fenced tex
 Sleep only:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --bedtime 22:40 --wake 06:10
+agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --bedtime 22:40 --wake 06:10
 ```
 
 Add drinks and zazen later without disturbing sleep:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --drinks 1.5 --zazen yes
+agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --drinks 1.5 --zazen yes
 ```
 
 Record routines and fitness:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --morning-routine yes --evening-routine no --fitness "walk; yard work"
+agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py --date 2026-05-02 --morning-routine yes --evening-routine no --fitness "walk; yard work"
 ```
 
 Redraw only:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
+agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py
 ```
 
 Last 7 days summary:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset 1w
 ```
 
 Previous 7 days summary as JSON:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset pw --json
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --preset pw --json
 ```
 
 Weekly review heartbeat block:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown
 ```
 
 Weekly review heartbeat block anchored to a specific end date:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown --end 2026-06-06
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --weekly-review-markdown --end 2026-06-06
 ```
 
 Custom range summary:
 
 ```bash
-.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --start 2026-05-01 --end 2026-05-20
+agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py --start 2026-05-01 --end 2026-05-20
 ```
 
 ## Parker Workflow
@@ -156,13 +156,13 @@ Custom range summary:
 1. Determine the target date. If Pavel says "yesterday" or similar, resolve it before calling the command. If Pavel describes sleep as "slept from ... to ...", "I slept ...", or similar and says "last night" or gives no explicit date, log the sleep against yesterday's date, because the row represents the date the sleep began.
 2. Translate the shared facts into command flags using the formats above.
 3. Include only the fields Pavel actually provided or corrected. Do not infer or write `no` for omitted activity-style boolean fields (routines and zazen), and do not invent a fitness value; omission means leave the stored value unchanged.
-4. Run `.agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py` once per date, sequentially. Do not use parallel tool calls for multiple writes to the metrics CSV.
+4. Run `agents/skills/daily-metrics-logging/scripts/log-daily-metrics.py` once per date, sequentially. Do not use parallel tool calls for multiple writes to the metrics CSV.
 5. Confirm what was recorded in natural language without dumping the private store.
-6. If the task is redraw-only, run `.agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.
+6. If the task is redraw-only, run `agents/skills/daily-metrics-logging/scripts/render-sleep-dashboard.py` directly instead of the logging command.
 
 ### Reading Data
 
-If you need to retrieve averages such as last 7 days vs previous 7 days, past 4 weeks, past 7 weeks, or a custom metrics summary for review/planning, run `.agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py` rather than reading the CSV or scraping the HTML.
+If you need to retrieve averages such as last 7 days vs previous 7 days, past 4 weeks, past 7 weeks, or a custom metrics summary for review/planning, run `agents/skills/daily-metrics-logging/scripts/summarize-daily-metrics.py` rather than reading the CSV or scraping the HTML.
 
 Use the default text output for normal summary lookups. Do not use `--json` unless Pavel explicitly asks for JSON or you are debugging the summary workflow.
 

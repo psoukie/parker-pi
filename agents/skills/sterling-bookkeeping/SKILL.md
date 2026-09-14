@@ -17,7 +17,7 @@ Sterling is a specialized bookkeeping agent. Use this skill when Parker needs he
 - Before adding or changing any `persistent` merchant rule, propose it in chat and wait for Pavel's approval.
 - Use `batch_only` for one-off purchases, trip-specific items, marketplaces, or cases where the item bought matters more than the merchant.
 - During normal runs, do not open `$USER_DATA/bookkeeping/merchants.tsv` to inspect or confirm deterministic matches or persistent writes. Trust the script output unless debugging a broken workflow or Pavel explicitly asks.
-- Do not read `.agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py` during normal bookkeeping work. Script inspection is strictly forbidden unless Pavel explicitly asks to debug or modify the bookkeeping workflow itself.
+- Do not read `agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py` during normal bookkeeping work. Script inspection is strictly forbidden unless Pavel explicitly asks to debug or modify the bookkeeping workflow itself.
 
 ## Account Selection
 
@@ -35,7 +35,7 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 
 - `$USER_DATA/bookkeeping/chart-of-accounts.md`: local account codes and normal balances.
 - `$USER_DATA/bookkeeping/merchants.tsv`: durable merchant matching rules used by the deterministic script; do not read during normal review.
-- `.agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py`: deterministic CSV-to-unknowns and CSV-to-journal handler.
+- `agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py`: deterministic CSV-to-unknowns and CSV-to-journal handler.
 - `$USER_DATA/bookkeeping/journal/unknowns.tsv`: private review file generated during a batch.
 - `$USER_DATA/bookkeeping/journal/reviewed_unknowns.tsv`: private review file Sterling prepares after classification.
 - `$USER_DATA/bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv`: private final journal output.
@@ -45,7 +45,7 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 0. Preprocess the statement CSV to start the batch:
 
    ```bash
-   python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns $USER_DATA/bookkeeping/journal/unknowns.tsv
+   python3 agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv --unknowns $USER_DATA/bookkeeping/journal/unknowns.tsv
    ```
 
    When called with `--unknowns`, the script clears `$USER_DATA/bookkeeping/journal/unknowns.tsv` and `$USER_DATA/bookkeeping/journal/reviewed_unknowns.tsv` first so stale reviewed classifications do not carry forward into the current batch.
@@ -80,7 +80,7 @@ When classifying unknowns, choose the most relevant COA account for the substanc
 6. Generate final journal entries:
 
    ```bash
-   python3 .agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv \
+   python3 agents/skills/sterling-bookkeeping/scripts/preprocess_transactions.py INPUT.csv \
      --output $USER_DATA/bookkeeping/journal/entries_YYYYMMDD_HHMM.tsv \
      --reviewed-unknowns $USER_DATA/bookkeeping/journal/reviewed_unknowns.tsv \
      --account-normal-direction credit \
